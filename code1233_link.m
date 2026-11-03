@@ -1,5 +1,5 @@
 function code1233_link(M, numSlots, outputFolder)
-% Single-layer OFDM link with TDL-C, perfect CSI, and CRC-verified payload.
+% Post-LDPC BER for a high-mobility, long-delay TDL-C channel with perfect CSI.
 arguments
     M (1,1) double {mustBeMember(M,[256 512])} = 256
     numSlots (1,1) double {mustBeInteger,mustBePositive} = 64
@@ -14,12 +14,10 @@ ofdm = nrOFDMInfo(carrier);
 K = 12 * carrier.NSizeGrid;
 L = carrier.SymbolsPerSlot;
 slotSamples = sum(ofdm.SymbolLengths(1:L));
-slotDuration = slotSamples / ofdm.SampleRate;
-bandwidth = 50e6;
 carrierFrequency = 28e9;
-speedKmh = 30;
+speedKmh = 120;
 maxDoppler = (speedKmh / 3.6) * carrierFrequency / 299792458;
-delaySpread = 300e-9;
+delaySpread = 1000e-9;
 targetRate = 0.5;
 snrDb = 0:5:40;
 bitsPerSymbol = log2(M);
@@ -72,8 +70,6 @@ configs = [1 1 1 1; 1 4 1 4; 4 1 4 1; 4 4 4 4; 16 16 4 4; 32 32 8 8];
 configNames = {'SISO (1x1)','SIMO (1x4)','MISO (4x1)','MIMO (4x4)', ...
     'mMIMO (16x16 HBF)','mMIMO (32x32 HBF)'};
 dimensions = [size(configs,1), numel(snrDb)];
-bitErrors = zeros(dimensions);
-blockErrors = zeros(dimensions);
 postBitErrors = zeros(dimensions);
 for c = 1:size(configs,1)
     Nt = configs(c,1);
@@ -151,12 +147,10 @@ for c = 1:size(configs,1)
                 'UnitAveragePower',true,'NoiseVariance',1);
             weights = 1./reshape(effectiveVariance,1,[]);
             deinterleaved(bitOrder) = reshape(reshape(soft,bitsPerSymbol,[]).*weights,[],1);
-            bitErrors(c,s) = bitErrors(c,s) + nnz((deinterleaved < 0) ~= logical(coded(:)));
             reset(decoder);
-            [decoded,crcFailed] = decoder(max(-50,min(50,deinterleaved)),rateMatchMod,1,0);
+            decoded = decoder(max(-50,min(50,deinterleaved)),rateMatchMod,1,0);
             payloadErrors = nnz(decoded(:) ~= payload(:));
             postBitErrors(c,s) = postBitErrors(c,s) + payloadErrors;
-            blockErrors(c,s) = blockErrors(c,s) + double(crcFailed || payloadErrors > 0);
         end
         if mod(slot,16) == 0 || slot == numSlots
             fprintf('  %d/%d slots\n',slot,numSlots);
@@ -164,29 +158,15 @@ for c = 1:size(configs,1)
     end
 end
 
-totalBits = repmat(codedBitsPerSlot*numSlots,dimensions);
-totalBlocks = repmat(numSlots,dimensions);
-ber = bitErrors./totalBits;
-bler = blockErrors./totalBlocks;
 totalPayloadBits = repmat(payloadBitsPerSlot*numSlots,dimensions);
 postBer = postBitErrors./totalPayloadBits;
-rawSE = (1-ber)*codedBitsPerSlot/(slotDuration*bandwidth);
-goodputMbps = (1-bler)*payloadBitsPerSlot/slotDuration/1e6;
-netSE = goodputMbps*1e6/bandwidth;
 metrics = table(repelem(configNames(:),numel(snrDb)),repmat(snrDb(:),size(configs,1),1), ...
-    reshape(bitErrors.',[],1),reshape(totalBits.',[],1), ...
-    reshape(blockErrors.',[],1),reshape(totalBlocks.',[],1), ...
-    reshape(ber.',[],1),reshape(postBer.',[],1),reshape(postBitErrors.',[],1), ...
-    reshape(totalPayloadBits.',[],1),reshape(bler.',[],1),reshape(rawSE.',[],1), ...
-    reshape(goodputMbps.',[],1),reshape(netSE.',[],1), ...
-    'VariableNames',{'Configuration','SNR_dB','BitErrors','TotalCodedBits','BlockErrors', ...
-    'TotalBlocks','BER','PostLDPC_BER','PostLDPC_BitErrors','TotalPayloadBits', ...
-    'BLER','RawCorrectBitSE','Goodput_Mbps','NetSE'});
-writetable(metrics,fullfile(outputFolder,'metrics.csv'));
-save(fullfile(outputFolder,'link_results.mat'),'M','numSlots','configs','configNames','snrDb', ...
-    'ber','bler','rawSE','goodputMbps','netSE','bitErrors','totalBits','blockErrors','totalBlocks', ...
-    'postBer','postBitErrors','totalPayloadBits','codedBitsPerSlot','payloadBitsPerSlot', ...
-    'slotDuration','bandwidth','maxDoppler','delaySpread');
+    reshape(postBer.',[],1),reshape(postBitErrors.',[],1),reshape(totalPayloadBits.',[],1), ...
+    'VariableNames',{'Configuration','SNR_dB','PostLDPC_BER','PostLDPC_BitErrors','TotalPayloadBits'});
+writetable(metrics,fullfile(outputFolder,'post_ldpc_ber.csv'));
+save(fullfile(outputFolder,'post_ldpc_ber.mat'),'M','numSlots','configs','configNames','snrDb', ...
+    'postBer','postBitErrors','totalPayloadBits','payloadBitsPerSlot','maxDoppler','delaySpread', ...
+    'speedKmh','carrierFrequency','targetRate','ofdm');
 end
 
 function channel = makeChannel(Nt,Nr,Fs,delaySpread,maxDoppler)
