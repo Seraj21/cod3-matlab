@@ -1,0 +1,36 @@
+name: Run coded OFDM link in MATLAB
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - code1233_link.m
+      - .github/workflows/code1233_link.yml
+
+permissions:
+  contents: read
+
+jobs:
+  simulate:
+    name: Coded link ${{ matrix.qam_order }}-QAM
+    strategy:
+      fail-fast: false
+      matrix:
+        qam_order: [256, 512]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2025b
+          products: Communications_Toolbox 5G_Toolbox
+      - uses: matlab-actions/run-command@v3
+        with:
+          command: code1233_link(${{ matrix.qam_order }},64,"results");
+      - uses: actions/upload-artifact@v7
+        with:
+          name: coded-link-${{ matrix.qam_order }}-QAM
+          path: results/
+          if-no-files-found: error
