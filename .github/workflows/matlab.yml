@@ -1,0 +1,36 @@
+name: Run cod3 in MATLAB
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - cod3.m
+      - .github/workflows/matlab.yml
+
+permissions:
+  contents: read
+
+jobs:
+  simulate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2025b
+          products: Communications_Toolbox
+      - uses: matlab-actions/run-command@v3
+        with:
+          command: >
+            assert(~isempty(which('qammod')) && ~isempty(which('qamdemod')), 'Communications Toolbox is required.');
+            cod3;
+            exportgraphics(gcf, 'BER_vs_SNR.png', 'Resolution', 200);
+            save('BER_results.mat', 'ber_results', 'snr_db_range', 'configs', 'config_names');
+      - uses: actions/upload-artifact@v7
+        with:
+          name: cod3-BER-results
+          path: |
+            BER_vs_SNR.png
+            BER_results.mat
+          if-no-files-found: error
