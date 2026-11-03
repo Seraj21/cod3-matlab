@@ -1,10 +1,10 @@
-function code1233_link(M, numSlots, outputFolder, configIndex)
+function code1233_link(M, numSlots, outputFolder, arraySize)
 % Post-LDPC BER for a high-mobility, long-delay TDL-C channel with perfect CSI.
 arguments
     M (1,1) double {mustBeMember(M,[256 512])} = 256
-    numSlots (1,1) double {mustBeInteger,mustBePositive} = 64
+    numSlots (1,1) double {mustBeInteger,mustBePositive} = 32
     outputFolder (1,1) string = "results"
-    configIndex (1,1) double {mustBeInteger,mustBeInRange(configIndex,1,6)} = 6
+    arraySize (1,1) double {mustBeMember(arraySize,[32 64])} = 32
 end
 if ~isfolder(outputFolder)
     mkdir(outputFolder);
@@ -29,14 +29,17 @@ bitsPerSymbol = log2(M);
 pdsch = nrPDSCHConfig('PRBSet',0:carrier.NSizeGrid-1,'SymbolAllocation',[2 L-2], ...
     'MappingType','A','Modulation','256QAM','NumLayers',1);
 pdsch.DMRS.NumCDMGroupsWithoutData = 1;
-pdsch.DMRS.DMRSAdditionalPosition = 1;
+pdsch.DMRS.DMRSAdditionalPosition = 3;
 dataIndices = nrPDSCHIndices(carrier,pdsch);
 pilotIndices = nrPDSCHDMRSIndices(carrier,pdsch);
 pilotSymbols = nrPDSCHDMRS(carrier,pdsch);
 assert(isempty(intersect(dataIndices,pilotIndices)));
 pilotMask = false(K,L);
 pilotMask(pilotIndices) = true;
-[stencil,groups] = makeStencil(pilotMask);
+prgWidth = 24; % Two resource blocks per precoding group.
+pilot = pilotLayout(pilotMask,prgWidth);
+[~,pilot.dataTimes] = ind2sub([K L],dataIndices);
+[stencil,groups] = makeStencil(pilot);
 codedBitsPerSlot = numel(dataIndices) * bitsPerSymbol;
 payloadBitsPerSlot = 8 * floor(targetRate * codedBitsPerSlot / 8);
 % MATLAB's NR LDPC rate matcher has no 512-QAM mode. Use its QPSK bit
@@ -66,25 +69,24 @@ testLLR(bitOrder) = 12*(1-2*double(testHard(:)));
 assert(~testCRCFailed && all(testDecoded(:)==testPayload(:)),'Coded loopback failed.');
 fprintf('Verified noiseless CRC, LDPC, interleaver and %d-QAM loopback.\n',M);
 
-configs = [1 1 1 1; 1 4 1 4; 4 1 4 1; 4 4 4 4; 16 16 4 4; 32 32 8 8];
-configNames = {'SISO (1x1)','SIMO (1x4)','MISO (4x1)','MIMO (4x4)', ...
-    'mMIMO (16x16 HBF)','mMIMO (32x32 HBF)'};
 estimatorNames = {'LS','LMMSE','CNN','Perfect CSI'};
 postBitErrors = zeros(numel(estimatorNames),numel(snrDb));
-c = configIndex;
-Nt = configs(c,1);
-Nr = configs(c,2);
-fprintf('%d-QAM | %s | %d training slots and %d test slots\n',M,configNames{c},numTrainingSlots,numSlots);
+c = 6+(arraySize==64);
+Nt = arraySize;
+Nr = arraySize;
+numRF = 8;
+configName = sprintf('%dx%d HBF',Nt,Nr);
+fprintf('%d-QAM | %s | %d training slots and %d test slots\n',M,configName,numTrainingSlots,numSlots);
 trainingPayload = RandStream('mt19937ar','Seed',60000+c);
 trainingNoise = RandStream('mt19937ar','Seed',50000+c);
 testPayloadStream = RandStream('mt19937ar','Seed',10000+c);
 testNoise = RandStream('mt19937ar','Seed',20000+c);
 trainingTruth = cell(numTrainingSlots,1);
-trainingInputs = cell(numTrainingSlots,numel(trainingSNR));
-trainingTargets = cell(size(trainingInputs));
+trainingSamples = cell(numTrainingSlots,numel(trainingSNR));
 
 probe = makeChannel(Nt,Nr,ofdm.SampleRate,delaySpread,maxDoppler);
 probe.ChannelFiltering = false;
+probe.OutputDataType = 'single';
 probe.ChannelResponseOutput = 'ofdm-response';
 channel = makeChannel(Nt,Nr,ofdm.SampleRate,delaySpread,maxDoppler);
 channelInfo = info(channel);
@@ -109,7 +111,15 @@ for slot = 1:numTrainingSlots+numSlots
     assert(size(response,1) == K && size(response,2) >= L && ...
         size(response,3) == Nr && size(response,4) == Nt);
     H = permute(response(:,1:L,:,:),[3 4 1 2]);
-    [precoder,receiver] = beamformers(H(:,:,:,1),configs(c,3),configs(c,4));
+    [precoder,receiver] = beamformers(H(:,:,:,1),numRF,numRF,prgWidth);
+    if slot == 1
+        [perTone,~] = beamformers(H(:,:,:,1),numRF,numRF,1);
+        oldEffective = effectiveFirstSymbol(H(:,:,:,1),receiver,perTone);
+        newEffective = effectiveFirstSymbol(H(:,:,:,1),receiver,precoder);
+        fprintf('Adjacent-tone variation on a training slot: per-tone %.4f, PRG %.4f.\n', ...
+            toneVariation(oldEffective),toneVariation(newEffective));
+        clear perTone oldEffective newEffective
+    end
 
     payload = int8(randi(payloadStream,[0 1],payloadBitsPerSlot,1));
     setTransportBlock(encoder,payload);
@@ -117,38 +127,32 @@ for slot = 1:numTrainingSlots+numSlots
     layerGrid = complex(zeros(K,L));
     layerGrid(dataIndices) = qammod(coded(bitOrder),M,'InputType','bit','UnitAveragePower',true);
     layerGrid(pilotIndices) = pilotSymbols;
-    antennaGrid = reshape(layerGrid,K,L,1).*reshape(precoder.',K,1,Nt);
+    antennaGrid = reshape(single(layerGrid),K,L,1).*reshape(precoder.',K,1,Nt);
     tx = nrOFDMModulate(carrier,antennaGrid,'Windowing',0);
     assert(size(tx,1)==slotSamples);
-    rx = channel([tx; zeros(tailSamples,Nt)]);
+    rx = channel([tx; zeros(tailSamples,Nt,'like',tx)]);
     rx = rx(timingOffset+(1:slotSamples),:)*conj(receiver);
     projected = pagemtimes(receiver','none',H,'none');
     Hsingle = pagemtimes(projected,reshape(precoder,Nt,1,K,1));
-    Hgrid = reshape(permute(Hsingle,[3 4 1 2]),K,L,[]);
+    Hgrid = double(reshape(permute(Hsingle,[3 4 1 2]),K,L,[]));
+    clear response H projected Hsingle
 
     baseNoise = (randn(noiseStream,size(rx)) + 1i*randn(noiseStream,size(rx))) ...
         /sqrt(2*double(ofdm.Nfft));
-    signalGrid = nrOFDMDemodulate(carrier,rx);
+    signalGrid = double(nrOFDMDemodulate(carrier,rx));
     noiseGrid = nrOFDMDemodulate(carrier,baseNoise);
     if training
-        % Select two RF branches per slot for CNN training; LMMSE uses all.
-        trainBranches = 1:min(2,size(Hgrid,3));
         trainingTruth{slot} = single(Hgrid);
         for s = 1:numel(trainingSNR)
             noiseVariance = 10^(-trainingSNR(s)/10);
             receivedGrid = signalGrid + sqrt(noiseVariance)*noiseGrid;
-            [ls,~,nVar,scale] = practicalInputs(carrier,receivedGrid,pilotIndices,pilotSymbols,noiseVariance);
-            x = makeFeatures(ls(:,:,trainBranches),scale(trainBranches),nVar,pilotMask);
-            truth = Hgrid(:,:,trainBranches)./reshape(scale(trainBranches),1,1,[]);
-            residual = truth-ls(:,:,trainBranches)./reshape(scale(trainBranches),1,1,[]);
-            trainingInputs{slot,s} = x;
-            trainingTargets{slot,s} = single(cat(3, ...
-                reshape(real(residual),K,L,1,[]),reshape(imag(residual),K,L,1,[])));
+            [ls,pilotGrid,nVar,scale] = practicalInputs(receivedGrid,pilotIndices,pilotSymbols,noiseVariance,pilot);
+            trainingSamples{slot,s} = {single(ls),single(pilotGrid),nVar,scale};
         end
         if slot == numTrainingSlots
             lmmse = trainLMMSE(trainingTruth,stencil,groups,pilotIndices);
-            cnn = trainCNN(cat(4,trainingInputs{:}),cat(4,trainingTargets{:}),K,L,c);
-            clear trainingInputs trainingTargets trainingTruth
+            cnn = trainCNN(trainingSamples,trainingTruth,lmmse,stencil,groups,pilot,c);
+            clear trainingSamples trainingTruth
             fprintf('Training completed; starting independent evaluation.\n');
         end
         continue
@@ -157,9 +161,9 @@ for slot = 1:numTrainingSlots+numSlots
     for s = 1:numel(snrDb)
         noiseVariance = 10^(-snrDb(s)/10);
         receivedGrid = signalGrid + sqrt(noiseVariance)*noiseGrid;
-        [ls,pilotGrid,nVar,scale] = practicalInputs(carrier,receivedGrid,pilotIndices,pilotSymbols,noiseVariance);
+        [ls,pilotGrid,nVar,scale] = practicalInputs(receivedGrid,pilotIndices,pilotSymbols,noiseVariance,pilot);
         wiener = estimateLMMSE(pilotGrid,nVar,scale,lmmse,stencil,groups);
-        cnnEstimate = estimateCNN(cnn,ls,scale,nVar,pilotMask);
+        cnnEstimate = estimateCNN(cnn,ls,wiener,scale,nVar,pilot);
         estimates = {ls,wiener,cnnEstimate,Hgrid};
         for est = 1:numel(estimatorNames)
             % The same equalizer, soft demapper and LDPC decoder are used.
@@ -168,7 +172,14 @@ for slot = 1:numTrainingSlots+numSlots
             equalized = sum(conj(h).*receivedGrid,3)./gain;
             soft = qamdemod(equalized(dataIndices),M,'OutputType','approxllr', ...
                 'UnitAveragePower',true,'NoiseVariance',1);
-            weights = reshape(gain(dataIndices),1,[])/nVar;
+            pilotError = abs(equalized(pilotIndices)-pilotSymbols).^2;
+            pilotGain = gain(pilotIndices);
+            groupGain = max(pilot.timeGroups.'*pilotGain,eps);
+            residualAtPilot = max(0,(pilot.timeGroups.'*(pilotGain.*pilotError) ...
+                - nVar*pilot.timeCounts)./groupGain);
+            residual = pilot.timeInterp*residualAtPilot;
+            dataVariance = nVar./gain(dataIndices) + residual(pilot.dataTimes);
+            weights = 1./reshape(dataVariance,1,[]);
             deinterleaved = zeros(codedBitsPerSlot,1);
             deinterleaved(bitOrder) = reshape(reshape(soft,bitsPerSymbol,[]).*weights,[],1);
             reset(decoder);
@@ -187,38 +198,71 @@ metrics = table(repelem(estimatorNames(:),numel(snrDb)),repmat(snrDb(:),numel(es
     reshape(postBer.',[],1),reshape(postBitErrors.',[],1),reshape(totalPayloadBits.',[],1), ...
     'VariableNames',{'Estimator','SNR_dB','PostLDPC_BER','PostLDPC_BitErrors','TotalPayloadBits'});
 writetable(metrics,fullfile(outputFolder,'post_ldpc_ber.csv'));
-configName = configNames{c};
-save(fullfile(outputFolder,'post_ldpc_ber.mat'),'M','numSlots','numTrainingSlots','configIndex', ...
+save(fullfile(outputFolder,'post_ldpc_ber.mat'),'M','numSlots','numTrainingSlots','arraySize','numRF','prgWidth', ...
     'configName','estimatorNames','snrDb','postBer','postBitErrors','totalPayloadBits', ...
-    'payloadBitsPerSlot','maxDoppler','delaySpread','speedKmh','carrierFrequency','targetRate');
+    'payloadBitsPerSlot','maxDoppler','delaySpread','speedKmh','carrierFrequency','targetRate','pilot');
 end
 
-function [ls,pilotGrid,nVar,scale] = practicalInputs(carrier,grid,pilotIndices,pilotSymbols,nominalNoise)
-[K,L,R] = size(grid);
-[ls,estimatedNoise] = nrChannelEstimate(carrier,grid,pilotIndices,pilotSymbols);
-ls = reshape(ls,K,L,R);
-flat = reshape(grid,K*L,R);
-pilotLS = flat(pilotIndices,:)./pilotSymbols;
-pilotGrid = complex(zeros(K*L,R));
-pilotGrid(pilotIndices,:) = pilotLS;
-nVar = max(nominalNoise,mean(double(estimatedNoise(:))));
-scale = sqrt(max(mean(abs(pilotLS).^2,1)-nVar,max(0.1*nVar,1e-4)));
-end
-
-function [indices,groups] = makeStencil(mask)
-[K,~] = size(mask);
-times = find(any(mask,1));
-pilots = find(mask(:,times(1)));
+function p = pilotLayout(mask,W)
+[K,L] = size(mask);
+assert(mod(K,W)==0);
+G = K/W;
+[f,t] = find(mask);
+times = unique(t);
+assert(numel(times)>=3,'Expected at least three time-domain DM-RS positions.');
+frequencies = find(mask(1:W,times(1)));
+assert(isequal(mask,repmat(mask(1:W,:),G,1)));
 assert(all(mask(:,times)==mask(:,times(1)),'all'));
-count = 4;
-center = interp1(double(pilots),1:numel(pilots), (1:K).','nearest','extrap');
-start = max(1,min(numel(pilots)-count+1,center-1));
-neighbors = pilots(start+(0:count-1));
-indices = zeros(K,numel(times)*count);
-for t = 1:numel(times)
-    indices(:,(t-1)*count+(1:count)) = neighbors+(times(t)-1)*K;
+p.W = W;
+p.K = K;
+p.L = L;
+p.G = G;
+p.P = numel(frequencies);
+p.T = numel(times);
+p.freq = frequencies;
+p.times = times;
+p.timeGroups = double(t==times.');
+p.timeCounts = sum(p.timeGroups,1).';
+p.timeInterp = interp1(times,eye(p.T),min(times(end),max(times(1),(1:L).')),'linear');
+p.freqInterp = interp1(frequencies,eye(p.P), ...
+    min(frequencies(end),max(frequencies(1),(1:W).')),'linear');
+p.mask = mask(1:W,:);
+assert(numel(f)==p.P*G*p.T);
+fprintf('DM-RS OFDM symbols (zero based): %s\n',mat2str(times.'-1));
 end
-[~,~,groups] = unique(neighbors-(1:K).','rows');
+
+function [ls,pilotGrid,nVar,scale] = practicalInputs(grid,pilotIndices,pilotSymbols,nominalNoise,p)
+R = size(grid,3);
+flat = reshape(grid,p.K*p.L,R);
+pilotLS = flat(pilotIndices,:)./pilotSymbols;
+pilotGrid = complex(zeros(p.K*p.L,R));
+pilotGrid(pilotIndices,:) = pilotLS;
+samples = reshape(pilotLS,p.P,p.G,p.T,R);
+% Leave the middle pilot out. The 1.5 factor is the variance gain of
+% subtracting the average of two independent noisy pilot observations.
+predictionError = samples(2:end-1,:,:,:)-(samples(1:end-2,:,:,:)+samples(3:end,:,:,:))/2;
+pilotDisturbance = median(abs(predictionError).^2,'all')/(1.5*log(2));
+nVar = max(nominalNoise,pilotDisturbance);
+scale = sqrt(max(mean(abs(pilotLS).^2,1)-nVar,max(0.1*nVar,1e-4)));
+inPRGs = permute(samples,[1 3 2 4]);
+freq = pagemtimes(p.freqInterp,inPRGs);
+both = pagemtimes(freq,p.timeInterp.');
+ls = reshape(permute(both,[1 3 2 4]),p.K,p.L,R);
+end
+
+function [indices,groups] = makeStencil(p)
+k = (1:p.K).';
+localK = mod(k-1,p.W)+1;
+base = k-localK;
+count = 4;
+center = interp1(double(p.freq),1:p.P,localK,'nearest','extrap');
+start = max(1,min(p.P-count+1,center-1));
+neighbors = p.freq(start+(0:count-1));
+indices = zeros(p.K,p.T*count);
+for t = 1:p.T
+    indices(:,(t-1)*count+(1:count)) = base+neighbors+(p.times(t)-1)*p.K;
+end
+[~,~,groups] = unique(neighbors-localK,'rows');
 end
 
 function model = trainLMMSE(truth,stencil,groups,pilotIndices)
@@ -264,37 +308,75 @@ for branch = 1:R
 end
 end
 
-function x = makeFeatures(ls,scale,nVar,pilotMask)
-[K,L,R] = size(ls);
-shape = [K L 1 R];
-scaled = ls./reshape(scale,1,1,R);
-relativeNoise = log10(max(1e-5,nVar./scale.^2));
-timeCoordinate = repmat(linspace(-1,1,L),K,1,1,R);
-x = single(cat(3,reshape(real(scaled),shape),reshape(imag(scaled),shape), ...
-    repmat(pilotMask,1,1,1,R),repmat(reshape(relativeNoise,1,1,1,R),K,L,1,1),timeCoordinate));
+function x = makeFeatures(ls,wiener,scale,nVar,p)
+R = size(ls,3);
+divisor = reshape(scale,1,1,R);
+ls = asPRGPatches(ls./divisor,p);
+wiener = asPRGPatches(wiener./divisor,p);
+relativeNoise = repelem(log10(max(1e-5,nVar./scale.^2)),p.G);
+timeCoordinate = repmat(linspace(-1,1,p.L),p.W,1,1,p.G*R);
+x = single(cat(3,real(ls),imag(ls),real(wiener),imag(wiener), ...
+    repmat(p.mask,1,1,1,p.G*R), ...
+    repmat(reshape(relativeNoise,1,1,1,[]),p.W,p.L,1,1),timeCoordinate));
 end
 
-function net = trainCNN(x,y,K,L,c)
+function patches = asPRGPatches(h,p)
+patches = reshape(permute(reshape(h,p.W,p.G,p.L,[]),[1 3 2 4]),p.W,p.L,1,[]);
+end
+
+function net = trainCNN(samples,truth,lmmse,stencil,groups,p,c)
+X = cell(size(samples));
+Y = cell(size(samples));
+for slot = 1:size(samples,1)
+    % Sample across frequency and across RF branches, with fixed selection.
+    bands = mod((slot-1)+[0 5 10 15 20 25],p.G)+1;
+    R = size(truth{slot},3);
+    branches = unique(mod((slot-1)+[0 3 6],R)+1);
+    selected = reshape(bands.'+(branches-1)*p.G,1,[]);
+    for s = 1:size(samples,2)
+        item = samples{slot,s};
+        ls = double(item{1});
+        pilots = double(item{2});
+        nVar = item{3};
+        scale = item{4};
+        wiener = estimateLMMSE(pilots,nVar,scale,lmmse,stencil,groups);
+        features = makeFeatures(ls,wiener,scale,nVar,p);
+        target = (double(truth{slot})-wiener)./reshape(scale,1,1,[]);
+        target = asPRGPatches(target,p);
+        X{slot,s} = features(:,:,:,selected);
+        Y{slot,s} = single(cat(3,real(target(:,:,:,selected)),imag(target(:,:,:,selected))));
+    end
+end
 rng(70000+c,'twister');
 layers = [
-    imageInputLayer([K L 5],'Normalization','none')
-    convolution2dLayer([5 3],12,'Padding','same')
+    imageInputLayer([p.W p.L 7],'Normalization','none')
+    convolution2dLayer([5 3],16,'Padding','same')
     reluLayer
-    convolution2dLayer([5 3],12,'Padding','same','DilationFactor',[1 2])
+    convolution2dLayer([5 3],16,'Padding','same','DilationFactor',[1 2])
     reluLayer
-    convolution2dLayer([3 3],2,'Padding','same')
+    convolution2dLayer([3 3],2,'Padding','same','WeightsInitializer','zeros','BiasInitializer','zeros')
 ];
-opts = trainingOptions('adam','MaxEpochs',6,'MiniBatchSize',8,'InitialLearnRate',1e-3, ...
+opts = trainingOptions('adam','MaxEpochs',10,'MiniBatchSize',48,'InitialLearnRate',8e-4, ...
     'Shuffle','every-epoch','ExecutionEnvironment','cpu','Verbose',false);
-net = trainnet(x,y,layers,'mse',opts);
+net = trainnet(cat(4,X{:}),cat(4,Y{:}),layers,'mse',opts);
 end
 
-function h = estimateCNN(net,ls,scale,nVar,pilotMask)
-[K,L,R] = size(ls);
-x = makeFeatures(ls,scale,nVar,pilotMask);
-correction = double(extractdata(predict(net,dlarray(x,'SSCB'))));
-residual = reshape(complex(correction(:,:,1,:),correction(:,:,2,:)),K,L,R);
-h = ls+residual.*reshape(scale,1,1,R);
+function h = estimateCNN(net,ls,wiener,scale,nVar,p)
+R = size(ls,3);
+x = makeFeatures(ls,wiener,scale,nVar,p);
+z = double(extractdata(predict(net,dlarray(x,'SSCB'))));
+correction = reshape(complex(z(:,:,1,:),z(:,:,2,:)),p.W,p.L,p.G,R);
+correction = reshape(permute(correction,[1 3 2 4]),p.K,p.L,R);
+h = wiener+correction.*reshape(scale,1,1,R);
+end
+
+function h = effectiveFirstSymbol(H,receiver,precoder)
+weighted = pagemtimes(H,reshape(precoder,size(H,2),1,[]));
+h = reshape(pagemtimes(receiver',weighted),size(receiver,2),[]).';
+end
+
+function y = toneVariation(h)
+y = sum(abs(diff(h,1,1)).^2,'all')/max(sum(abs(h).^2,'all'),eps);
 end
 
 function channel = makeChannel(Nt,Nr,Fs,delaySpread,maxDoppler)
@@ -305,7 +387,7 @@ channel = nrTDLChannel('DelayProfile','TDL-C','DelaySpread',delaySpread, ...
     'NormalizeChannelOutputs',false,'RandomStream','mt19937ar with seed');
 end
 
-function [precoder,receiver] = beamformers(H,NrfTx,NrfRx)
+function [precoder,receiver] = beamformers(H,NrfTx,NrfRx,Wgroup)
 [Nr,Nt,K] = size(H);
 Rt = mean(pagemtimes(H,'ctranspose',H,'none'),3);
 Rr = mean(pagemtimes(H,'none',H,'ctranspose'),3);
@@ -318,10 +400,32 @@ W = exp(1i*angle(Vr(:,rxOrder(1:NrfRx))))/sqrt(Nr);
 receiver = orth(W);
 effective = pagemtimes(receiver','none',H,'none');
 effective = pagemtimes(effective,F);
-precoder = complex(zeros(Nt,K));
-for k = 1:K
-    [~,~,V] = svd(effective(:,:,k),'econ');
-    weights = F*V(:,1);
-    precoder(:,k) = weights/norm(weights);
+precoder = complex(zeros(Nt,K,'like',H));
+if Wgroup == 1
+    % Original per-tone method, used solely by the diagnostic.
+    for k = 1:K
+        [~,~,V] = svd(effective(:,:,k),'econ');
+        w = F*V(:,1);
+        precoder(:,k) = w/norm(w);
+    end
+    return
+end
+previous = [];
+for first = 1:Wgroup:K
+    block = first:min(first+Wgroup-1,K);
+    groupH = effective(:,:,block);
+    gram = mean(pagemtimes(groupH,'ctranspose',groupH,'none'),3);
+    [V,D] = eig((gram+gram')/2,'vector');
+    [~,best] = max(real(D));
+    w = F*V(:,best);
+    w = w/norm(w);
+    if ~isempty(previous)
+        overlap = previous'*w;
+        if abs(overlap)>1e-6
+            w = w*conj(overlap)/abs(overlap);
+        end
+    end
+    precoder(:,block) = repmat(w,1,numel(block));
+    previous = w;
 end
 end
