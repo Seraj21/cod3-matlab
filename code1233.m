@@ -37,8 +37,13 @@ configs_matrix = [
 config_names = {'SISO (1x1)', 'SIMO (1x4)', 'MISO (4x1)', 'MIMO (4x4)', 'mMIMO (16x16 HBF)', 'mMIMO (32x32 HBF)'};
 
 M = 256;
+modulation_order = getenv('CODE1233_QAM_ORDER');
+if ~isempty(modulation_order)
+    M = str2double(modulation_order);
+    assert(ismember(M, [256, 512]), 'Supported QAM orders are 256 and 512.');
+end
 bps = log2(M);
-snr_db_range = 0:5:30;
+snr_db_range = 0:5:40;
 num_frames = 20;
 symbols_per_frame = 14;
 N_stream = 1;
@@ -163,25 +168,34 @@ all_markers = {'-o', '-s', '-^', '-d', '-h', '-p'};
 all_colors = {'k', 'b', 'r', 'g', 'm', [0.85, 0.32, 0.09]};
 linewidths = [1.5, 1.5, 1.5, 2, 2.5, 3];
 
-figure('Name', 'Hybrid Beamforming BER', 'Color', 'w');
+figure('Name', 'Hybrid Beamforming BER', 'Color', 'w', 'Position', [100 100 1150 740]);
 for c = 1:size(configs_matrix, 1)
     semilogy(snr_db_range, ber_results(c, :), all_markers{c}, ...
         'Color', all_colors{c}, 'LineWidth', linewidths(c), 'MarkerSize', 8);
     hold on;
 end
 grid on;
-title('BER Performance: Hybrid Beamforming (TDL-C Channel)', 'FontSize', 12);
+title(sprintf('Hybrid Beamforming BER (TDL-C) | %d-QAM', M));
 xlabel('SNR (dB)', 'FontWeight', 'bold'); ylabel('BER', 'FontWeight', 'bold');
-legend(config_names, 'Location', 'SouthWest');
+set(gca, 'FontSize', 16, 'TickLabelInterpreter', 'tex');
+xlim([snr_db_range(1), snr_db_range(end)]);
+xticks(snr_db_range);
 ylim([1e-6 1]);
+ber_exponents = -6:0;
+yticks(10 .^ ber_exponents);
+yticklabels(compose('10^{%d}', ber_exponents));
+legend(config_names, 'Location', 'southwest', 'FontSize', 15, 'Box', 'on');
 
-figure('Name', 'Hybrid Beamforming SE', 'Color', 'w');
+figure('Name', 'Hybrid Beamforming SE', 'Color', 'w', 'Position', [100 100 1150 740]);
 for c = 1:size(configs_matrix, 1)
     plot(snr_db_range, se_results(c, :), all_markers{c}, ...
         'Color', all_colors{c}, 'LineWidth', linewidths(c), 'MarkerSize', 8);
     hold on;
 end
 grid on;
-title('Spectral Efficiency', 'FontSize', 12);
+title(sprintf('Spectral Efficiency | %d-QAM', M));
 xlabel('SNR (dB)', 'FontWeight', 'bold'); ylabel('SE (bps/Hz)', 'FontWeight', 'bold');
-legend(config_names, 'Location', 'NorthWest');
+set(gca, 'FontSize', 16);
+xlim([snr_db_range(1), snr_db_range(end)]);
+xticks(snr_db_range);
+legend(config_names, 'Location', 'southeast', 'FontSize', 15, 'Box', 'on');

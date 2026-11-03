@@ -13,6 +13,11 @@ permissions:
 
 jobs:
   simulate:
+    name: ${{ matrix.qam_order }}-QAM
+    strategy:
+      fail-fast: false
+      matrix:
+        qam_order: [256, 512]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -21,15 +26,17 @@ jobs:
           release: R2025b
           products: Communications_Toolbox
       - uses: matlab-actions/run-command@v3
+        env:
+          CODE1233_QAM_ORDER: '${{ matrix.qam_order }}'
         with:
           command: >
             code1233;
             exportgraphics(findobj(groot, 'Type', 'figure', 'Name', 'Hybrid Beamforming BER'), 'BER_vs_SNR.png', 'Resolution', 200);
             exportgraphics(findobj(groot, 'Type', 'figure', 'Name', 'Hybrid Beamforming SE'), 'SE_vs_SNR.png', 'Resolution', 200);
-            save('code1233_results.mat', 'ber_results', 'thr_results', 'se_results', 'snr_db_range', 'configs_matrix', 'config_names');
+            save('code1233_results.mat', 'M', 'ber_results', 'thr_results', 'se_results', 'snr_db_range', 'configs_matrix', 'config_names');
       - uses: actions/upload-artifact@v7
         with:
-          name: code1233-results
+          name: code1233-${{ matrix.qam_order }}-QAM-results
           path: |
             BER_vs_SNR.png
             SE_vs_SNR.png
