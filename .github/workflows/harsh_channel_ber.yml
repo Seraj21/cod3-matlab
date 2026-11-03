@@ -1,0 +1,33 @@
+name: Harsh TDL-C post-LDPC BER
+on:
+  workflow_dispatch:
+  push:
+    branches: [harsh-channel-ber]
+    paths:
+      - code1233_link.m
+      - .github/workflows/harsh_channel_ber.yml
+permissions:
+  contents: read
+jobs:
+  simulate:
+    name: Harsh TDL-C ${{ matrix.qam_order }}-QAM
+    strategy:
+      fail-fast: false
+      matrix:
+        qam_order: [256, 512]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2025b
+          products: Communications_Toolbox 5G_Toolbox
+      - uses: matlab-actions/run-command@v3
+        with:
+          command: code1233_link(${{ matrix.qam_order }},64,"results");
+      - uses: actions/upload-artifact@v7
+        with:
+          name: harsh-post-ber-${{ matrix.qam_order }}-QAM
+          path: results/
+          if-no-files-found: error
