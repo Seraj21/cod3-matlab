@@ -1,0 +1,25 @@
+name: Cancel superseded HBF checks
+on:
+  push:
+    branches: [practical-hbf-receiver]
+    paths: [.github/workflows/cleanup_hbf_runs.yml]
+permissions:
+  actions: write
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v8
+        with:
+          script: |
+            const superseded = [
+              [41816503219, "b4bc93cc55dfb7435ec483d400526015237c29ab"],
+              [41816503065, "b4bc93cc55dfb7435ec483d400526015237c29ab"],
+              [41816890207, "aa904e5fa149256984ca8360e3038e3e3ae2037f"]
+            ];
+            for (const [run_id, expected] of superseded) {
+              const {data: run} = await github.rest.actions.getWorkflowRun({...context.repo, run_id});
+              if (run.head_sha === expected && run.status !== "completed") {
+                await github.rest.actions.cancelWorkflowRun({...context.repo, run_id});
+              }
+            }
