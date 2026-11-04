@@ -1,0 +1,63 @@
+name: MU verified figures and results package
+on:
+  push:
+    branches: [mu-downlink-tdlc]
+    paths: [.github/workflows/mu_report.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: Seraj21/cod3-matlab
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Check analyzer syntax and install scientific tools
+        run: |
+          python -m py_compile tools/analyze_mu.py
+          python -m pip install numpy scipy matplotlib
+      - name: Wait for frozen-model experiment
+        run: gh run watch 41841619172 --exit-status --interval 60
+      - name: Download and verify all experiment artifacts
+        if: always()
+        shell: python
+        run: |
+          import concurrent.futures,hashlib,json,pathlib,subprocess
+          root=pathlib.Path("mu_artifacts");root.mkdir(exist_ok=True)
+          endpoint="repos/Seraj21/cod3-matlab/actions/runs/41841619172/artifacts?per_page=100"
+          metadata=json.loads(subprocess.check_output(["gh","api",endpoint]))
+          allowed={"mu-frozen-model","mu-training-report"}|{f"mu-{a}-batch-{b}" for a in [32,64] for b in range(8)}
+          selected=[a for a in metadata["artifacts"] if a["name"] in allowed]
+          assert len({a["name"] for a in selected})==len(selected)
+          manifest=[]
+          def download(a):
+              path=root/(a["name"]+".zip")
+              with path.open("wb") as f:
+                  subprocess.run(["gh","api",f'repos/Seraj21/cod3-matlab/actions/artifacts/{a["id"]}/zip'],stdout=f,check=True)
+              actual=hashlib.sha256(path.read_bytes()).hexdigest()
+              expected=a.get("digest")
+              if expected:assert expected=="sha256:"+actual,(a["name"],expected,actual)
+              return {"id":a["id"],"name":a["name"],"sha256":actual,"run_id":41841619172,"source_commit":"73c537ef9870648df6dccd86b56c498bf4e4db29","bytes":path.stat().st_size}
+          with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+              manifest=list(pool.map(download,selected))
+          (root/"artifact_manifest.json").write_text(json.dumps(manifest,indent=2))
+          print(json.dumps(manifest,indent=2))
+          missing=allowed-{a["name"] for a in selected}
+          assert not missing,f"Missing completed experiment artifacts: {missing}"
+      - name: Recompute every BER and goodput value and draw figures
+        run: python tools/analyze_mu.py --artifacts mu_artifacts --output mu_verified
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: MU-verified-results
+          path: |
+            MU-TDL-C-512QAM-MR-ZF-PZF.zip
+            mu_verified/
+            mu_artifacts/artifact_manifest.json
+          if-no-files-found: error
