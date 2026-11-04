@@ -36,7 +36,7 @@ def figure_for_series(x, values, array, precoder, kind, payload_bits, frames,
         zero = (values[:, method] == 0) if kind == "BER" else np.zeros(len(x), bool)
         if np.any(zero):
             ax.scatter(x[zero], shown[zero, method], marker=MARKERS[method],
-                       facecolors="none", edgecolors=COLORS[method], s=65, zorder=9)
+                       facecolors="none", edgecolors=COLORS[method], s=65, zorder=9, clip_on=False)
     if kind == "BER":
         lower = max(1e-12, float(shown.min())*.85)
         upper = min(1, float(shown.max())*1.18)
@@ -60,7 +60,7 @@ def figure_for_series(x, values, array, precoder, kind, payload_bits, frames,
         foot = f"Full frame includes sounding, guard and pilots. Resource ceiling: {ceiling:g} Mbit/s."
     ax.set_xlim(float(x.min()), float(x.max()))
     ax.set_xticks(np.arange(0, 21, 2))
-    ax.set_xlabel("Downlink SNR (dB)")
+    ax.set_xlabel("Nominal downlink SNR (dB)")
     ax.set_title(f"{precoder} | BS {array}, 4 users, 4 Rx/user | TDL-C, 512-QAM, LDPC")
     ax.grid(True, which="both", alpha=.22)
     ax.legend(loc="best", fontsize=13, framealpha=.95)

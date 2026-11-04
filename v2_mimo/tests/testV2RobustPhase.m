@@ -3,7 +3,7 @@ tests=functiontests(localfunctions);
 end
 function setupOnce(~)
 root=fileparts(fileparts(fileparts(mfilename('fullpath'))));
-addpath(fullfile(root,'mu_mimo'),fullfile(root,'v2_mimo'));
+addpath(root,fullfile(root,'mu_mimo'),fullfile(root,'v2_mimo'));
 end
 function testSinglePrecisionWarmStartAndPhysicalConstraints(testCase)
 stream=RandStream('mt19937ar','Seed',771);
