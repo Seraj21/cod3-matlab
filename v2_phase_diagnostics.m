@@ -1,7 +1,8 @@
 function v2_phase_diagnostics(bs)
 % Bounded diagnosis, not a replacement for the independent frozen-model test.
 addpath('mu_mimo','v2_mimo');load('v2_frozen/v2_model.mat','model');
-addpath('external_manopt');importmanopt;
+% importmanopt is interactive and assumes a changed working directory.
+addpath(genpath(fullfile(pwd,'external_manopt','manopt')));
 rows=cell(0,14);opt=cell(0,8);sources=["LS" "LMMSE" "CNN" "Perfect"];
 for rate=[.5 .125]
  cfg=v2Config(bs);cfg.Rate=rate;r=muResources(cfg);

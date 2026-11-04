@@ -1,4 +1,5 @@
 name: V2 independent phase-only algorithm and Manopt controls
+# Use a noninteractive Manopt path; no installation prompt in batch MATLAB.
 on:
   push:
     branches: [mu-cnn-v2]
