@@ -6,4 +6,4 @@
 - MathWorks `qammod`: https://www.mathworks.com/help/comm/ref/qammod.html . MATLAB's 512-QAM is cross-QAM. `v2_reference_checks` enumerates all 512 actual constellation points and their nine-bit labels, and compares native approximate LLRs with independent exhaustive distance metrics. No square- or rectangular-QAM BER formula is assumed.
 - MathWorks `nrRateMatchLDPC`: https://www.mathworks.com/help/5g/ref/nrratematchldpc.html . Eight bit-exact comparisons cover Qm=2/4/6/8, both one and multiple code blocks. Qm=9 remains the documented experimental extension. A separate AWGN/512-QAM/LDPC control checks the coding path before adding MIMO, channel aging, ICI and RF impairments.
 
-Reference checks complement the independent-seed waveform tests; they do not establish field performance or guarantee a CNN gain.
+Reference checks complement independent-seed waveform tests. Actual CNN gains are determined from payload bit errors and CRC-counted goodput.

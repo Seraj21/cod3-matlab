@@ -1,0 +1,39 @@
+name: V2 independent stronger-LDPC operating point
+on:
+  push:
+    branches: [mu-cnn-v2]
+    paths: [.github/workflows/v2_robust.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  evaluate:
+    strategy:
+      fail-fast: false
+      matrix:
+        antennas: [32, 64]
+        batch: [0, 1, 2, 3, 4, 5, 6, 7]
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: v2-frozen-model
+          run-id: 41908344154
+          github-token: ${{ github.token }}
+          path: v2_frozen
+      - uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2025b
+          products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
+      - name: Test the same frozen CNNs with explicit rate 1/8 and four users
+        uses: matlab-actions/run-command@v3
+        with:
+          command: run_v2_mimo(${{ matrix.antennas }},16,'v2_results',[0:.5:10 11:20],30000000+${{ matrix.batch }}*100000,'v2_frozen/v2_model.mat',.125);
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: v2-robust-${{ matrix.antennas }}-${{ matrix.batch }}
+          path: v2_results/
+          if-no-files-found: warn
