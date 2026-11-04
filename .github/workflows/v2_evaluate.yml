@@ -1,0 +1,77 @@
+name: V2 frozen payload validation and independent comparison
+on:
+  push:
+    branches: [mu-cnn-v2]
+    paths: [.github/workflows/v2_evaluate.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  freeze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v7
+      - name: Wait for the three independent receiver models
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run watch 41907505948 --exit-status --interval 60
+      - uses: actions/download-artifact@v8
+        with:
+          name: v2-transmitter-model
+          run-id: 41905811099
+          github-token: ${{ github.token }}
+          path: v2_tx_training
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: v2-receiver-*
+          run-id: 41907505948
+          github-token: ${{ github.token }}
+          path: rx_models
+      - uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2025b
+          products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
+      - uses: matlab-actions/run-tests@v3
+        with:
+          source-folder: .
+          select-by-folder: v2_mimo/tests
+      - name: Select CNN blending on independent payload validation
+        uses: matlab-actions/run-command@v3
+        with:
+          command: v2_freeze;
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: v2-frozen-model
+          path: v2_frozen/
+          if-no-files-found: warn
+  evaluate:
+    needs: freeze
+    strategy:
+      fail-fast: false
+      matrix:
+        antennas: [32, 64]
+        batch: [0, 1, 2, 3, 4, 5, 6, 7]
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: v2-frozen-model
+          path: v2_frozen
+      - uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2025b
+          products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
+      - name: Evaluate fixed weights without using test labels
+        uses: matlab-actions/run-command@v3
+        with:
+          command: run_v2_mimo(${{ matrix.antennas }},16,'v2_results',[0:.5:10 11:20],20000000+${{ matrix.batch }}*100000);
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: v2-evaluation-${{ matrix.antennas }}-${{ matrix.batch }}
+          path: v2_results/
+          if-no-files-found: warn
