@@ -106,6 +106,31 @@ end
 verifyGreaterThan(testCase,errors(1),0);
 verifyEqual(testCase,errors(2),0);
 end
+function testReferenceInCompensatedReceiverFrame(testCase)
+carrier = nrCarrierConfig('NSizeGrid',12,'SubcarrierSpacing',60,'CyclicPrefix','extended');
+ofdm = nrOFDMInfo(carrier);
+rng(820);
+grid = complex(randn(144,12),randn(144,12));
+tx = nrOFDMModulate(carrier,grid,'Windowing',0);
+phase = exp(1i*2*pi*2800*(0:size(tx,1)-1).'/ofdm.SampleRate);
+rx = tx.*phase;
+frequency = estimateCFO(rx,0,ofdm,12);
+received = nrOFDMDemodulate(carrier,rx.*exp(-1i*2*pi*frequency ...
+    *(0:size(rx,1)-1).'/ofdm.SampleRate));
+centers = zeros(1,12);
+raw = complex(zeros(144,12));
+first = 1;
+for symbol = 1:12
+    samples = first+double(ofdm.CyclicPrefixLengths(symbol))+(0:double(ofdm.Nfft)-1);
+    raw(:,symbol) = mean(phase(samples));
+    centers(symbol) = mean(samples)-1;
+    first = first+double(ofdm.SymbolLengths(symbol));
+end
+target = receiverFrame(raw,2*pi*(-72:71).'/double(ofdm.Nfft), ...
+    centers,frequency,0,0,ofdm.SampleRate);
+verifyLessThan(testCase,norm(received-grid.*target,'fro')/norm(grid,'fro'),.01);
+verifyGreaterThan(testCase,norm(received-grid.*raw,'fro')/norm(grid,'fro'),.5);
+end
 function testExternalRayChannelConjugationAndDelay(testCase)
 carrier = nrCarrierConfig('NSizeGrid',12,'SubcarrierSpacing',60,'CyclicPrefix','extended');
 ofdm = nrOFDMInfo(carrier);

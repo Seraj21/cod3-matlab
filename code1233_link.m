@@ -53,7 +53,7 @@ settings = struct('ArraySize',arraySize,'CarrierFrequency',28e9,'PhaseBits',4, .
     'PRGWidth',24,'SoundingSNR',15,'SampleRate',ofdm.SampleRate, ...
     'PhaseNoiseLevel',[-85 -100 -115],'PhaseNoiseOffset',[1e4 1e5 1e6], ...
     'InputBackoff',10,'AMPMDegrees',3,'FrequencyOffset',2800);
-config = struct('Version',2,'M',M,'ArraySize',arraySize,'NumRB',options.NumRB, ...
+config = struct('Version',3,'M',M,'ArraySize',arraySize,'NumRB',options.NumRB, ...
     'Settings',settings,'PayloadBits',payloadBitsPerSlot,'CodedBits',codedBitsPerSlot);
 modelFile = options.ModelFile;
 if modelFile == ""
@@ -130,7 +130,10 @@ for slot = 1:trainingSlots+testSlots
     if training
         points = trainingSNR;
         cleanOffset = estimateTiming(carrier,rx,pilotIndices,pilotSymbols,ceil(12e-6*ofdm.SampleRate));
-        trainingTruth{slot} = single(packet.Channel.*exp(1i*phaseStep*(cleanOffset-packet.TimingOffset)));
+        cleanFrequency = estimateCFO(rx,cleanOffset,ofdm,L);
+        % Learn temporal covariance in the same CFO-compensated frame as the receiver.
+        trainingTruth{slot} = single(receiverFrame(packet.Channel,phaseStep,packet.SymbolCenters, ...
+            cleanFrequency,cleanOffset,packet.TimingOffset,ofdm.SampleRate));
     else
         white = nrOFDMDemodulate(carrier,baseNoise(packet.TimingOffset+(1:slotSamples),:));
         clean = nrOFDMDemodulate(carrier,rx(packet.TimingOffset+(1:slotSamples),:));
@@ -149,8 +152,10 @@ for slot = 1:trainingSlots+testSlots
         [ls,pilotGrid,nVar,scale] = practicalInputs(received,pilotIndices,pilotSymbols,variance,pilot);
         residualPhase = exp(-1i*2*pi*frequency*packet.SymbolCenters/ofdm.SampleRate);
         if training
-            % Targets retain RF phase. CFO compensation is known to this receiver.
-            correction = exp(1i*phaseStep*(offset-cleanOffset)).*residualPhase;
+            % Move the clean compensated target to this noisy receiver's frame.
+            phaseDifference = exp(-1i*2*pi*(frequency-cleanFrequency) ...
+                *packet.SymbolCenters/ofdm.SampleRate);
+            correction = exp(1i*phaseStep*(offset-cleanOffset)).*phaseDifference;
             trainingSamples{slot,s} = {single(ls),single(pilotGrid),nVar,scale,single(correction)};
             continue
         end
@@ -158,7 +163,8 @@ for slot = 1:trainingSlots+testSlots
         cfoResidual(trial,s) = settings.FrequencyOffset-frequency;
         wiener = estimateLMMSE(pilotGrid,nVar,scale,lmmse,stencil,groups);
         neural = estimateCNN(cnn,ls,wiener,pilotGrid,scale,nVar,pilot);
-        oracle = packet.Channel.*reshape(residualPhase,1,L,1);
+        oracle = receiverFrame(packet.Channel,phaseStep,packet.SymbolCenters, ...
+            frequency,packet.TimingOffset,packet.TimingOffset,ofdm.SampleRate);
         estimates = {ls,wiener,neural,oracle};
         for method = 1:4
             observed = received;
