@@ -128,8 +128,13 @@ def plot(array,p,kind,ber,gp,bits,out):
         ax.set_ylim(10**math.floor(math.log10(float(positive.min()))),1)
         ax.set_ylabel("Payload BER after LDPC")
     else:
-        ax.set_ylim(0,CAP*1.055);ax.set_ylabel("Sum payload goodput (Mbit/s)")
-        ax.axhline(CAP,color="#777777",ls=":",lw=1)
+        peak=float(gp[:,p,:].max())
+        top=CAP*1.055 if peak>=.9*CAP else max(1,peak*1.15)
+        ax.set_ylim(0,top);ax.set_ylabel("Sum payload goodput (Mbit/s)")
+        if peak==0:
+            ax.text(.5,.47,"No correct CRC-passed payload blocks in this sample",
+                    transform=ax.transAxes,ha="center",fontsize=11,color="#555555")
+        if CAP<=top:ax.axhline(CAP,color="#777777",ls=":",lw=1)
     ax.set_xlim(0,20);ax.set_xticks(np.arange(0,21,2))
     ax.set_xlabel("Downlink SNR (dB), total radiated power / noise")
     ax.set_title(f"{PRECODERS[p]} | BS {array}, 4 users, 4 Rx/user | TDL-C, 512-QAM, LDPC")
@@ -137,7 +142,7 @@ def plot(array,p,kind,ber,gp,bits,out):
     ax.legend(loc="best",framealpha=.94,fontsize=11)
     foot=f"{bits:,} payload bits/point; {N*BATCHES} paired channel frames. "
     foot+=("Open zero-error marks at 1/Nbits show count resolution." if kind=="BER"
-           else "Full 0.25 ms frame includes sounding, guard, DM-RS and PTRS; no HARQ.")
+           else "Full 0.25 ms frame includes all overhead; resource ceiling 190.08 Mbit/s; no HARQ.")
     fig.supxlabel(foot,fontsize=8,color="#444444")
     path=out/f"MU-{PRECODERS[p]}-{kind}-BS{array}.png"
     fig.savefig(path,dpi=175);plt.close(fig)
@@ -273,6 +278,7 @@ Goodput = مجموع بتات الحمولات الخالية من الخطأ و
     text+="\nلا تعني زيادة قوة النموذج ضمان تفوقCNN في كلSNR. النتائج الخام وفروقBER وGoodput وفترات الثقة متاحة فيCSV، ويجب تفسير فروقها مع حجم العينة. قد ينشأ التسطح في هذه الظروف من تقادمCSI خلالTDD والتداخل المتبقي وICI وتشوهاتRF، إضافة إلى خطأ التقدير؛ اختبار المسار الهادئ عاليSNR يتحقق من فك حمولة المستخدمين لجميعprecoders.\n"
     text+="\n## تشخيص التسطح\nاختبار تبادل القناة تحت الحركة أعطى خطأ نسبيًا صفريًا بين المرجع المتبادل ومرجع التنزيل المباشر. في الاختبار المصغر، بلغ خطأ نموذج القناة القطري نحو1.39% من قدرة الإشارة عند120 km/h و1µs، مقابل نحو0.55% عند30ns مع السرعة نفسها، ونحو1% عند1µs مع سرعة صفر. تطابقت النتائج تقريبًا بين توليد path gains بالمعدل المختزل والمعدل الكامل. هذه اختبارات لفصل أسباب الأداء، ولا تحل محل اختبار128 إطارًا.\n"
     text+="\nنجح المرجع الهادئ لـZF في فك جميع الحمولات عند20dB. فشلت حالات الانتشار1µs الشديدة حتى معPerfect CSI في الاختبار التشخيصي. يترك النموذج القطري ومجمعMMSE تداخلًا بين الرموز والحوامل لا يزيله إعطاء CSI مثاليًا، وقد يضخمه فصل الطبقات. توجد قياسات انتشار300ns وعروض precoding مختلفة فيdiagnostics، باستعمال الشبكة المجمدة دون إعادة اختيارها. هذه القياسات مبنية على إطارين لكل حالة وتفسر الحساسية فقط.\n"
+    text+="\nاختبار إضافي فصلCSI المحطة عنCSI المستقبل عند300ns و20dB: نجح مرجعZF المثالي للطرفين في الحمولات الثماني، بينما فشلت الحمولات الثماني عند تقديرLMMSE في المحطة وحده أو في المستقبل وحده. خفضتCNN خطأ التقدير لدى المستقبل دون تحقيق فك حمولة ناجح في هذه العينة. [القياسات الخام للاختبار الإضافي](https://github.com/Seraj21/cod3-matlab/actions/runs/41854206157) تستعمل إطارين فقط، وهي تشخيصية ولا تدخل اختيار النموذج.\n"
     text+="\n## التحقق وإعادة التشغيل\nنجحت الاختبارات الثمانية، بما فيها reciprocity لـTDL-C، فصلDM-RS، حفظ ترتيب ميزاتCNN، فك الترميز متعدد المستخدمين دون ضوضاء، والتحكم الزمني الكامل عاليSNR. نجح التدريب المصغر والتقييم لكلا حجمي المحطة قبل التدريب الموسع. يعيد محلل النتائج حساب كل قيمة من أخطاء كل مستخدم، ويقارنCSV معMAT، ويتحقق من تطابق أوزانCNN في جميع ملفات الاختبار.\n"
     text+="\nالمصدر: https://github.com/Seraj21/cod3-matlab/tree/mu-downlink-tdlc\n"
     text+="\nتشغيل المصدر علىcommit73c537ef9870648df6dccd86b56c498bf4e4db29. بذور التدريب تبدأ1000000، تحقق القناة2000000، تحققBER3000000 مع إزاحة الحجم، والاختبار10000000 مع إزاحة مستقلة لكلحزمة.\n"
