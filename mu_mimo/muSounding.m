@@ -11,7 +11,7 @@ wave = complex(zeros(N,cfg.Users*cfg.UERx,'single'));
 txPhase = cell(cfg.Users,1);
 paGain = zeros(1,cfg.Users);
 for u = 1:cfg.Users
-    [distorted,txPhase{u},paGain(u)] = muRadio(userWave(:,u),cfg,seed+100000+u,true,0);
+    [distorted,txPhase{u},paGain(u)] = muRadio(userWave(:,u),cfg,muSeed(seed,11,u),true,0);
     columns = (u-1)*cfg.UERx+(1:cfg.UERx);
     wave(:,columns) = distorted*ones(1,cfg.UERx)/sqrt(cfg.UERx);
 end
@@ -19,8 +19,8 @@ swapTransmitAndReceive(channel);
 reset(channel);
 [rx,Hul,trueOffset] = channel([wave;zeros(tail,size(wave,2),'single')],r.Carrier);
 rx = rx.*front.ChannelGain.';
-[rx,rxPhase] = muRadio(rx,cfg,seed+200000,false,0);
-stream = RandStream('mt19937ar','Seed',seed+300000);
+[rx,rxPhase] = muRadio(rx,cfg,muSeed(seed,12),false,0);
+stream = RandStream('mt19937ar','Seed',muSeed(seed,13));
 baseNoise = complex(randn(stream,size(rx)),randn(stream,size(rx)))/sqrt(2*double(r.OFDM.Nfft));
 variance = 10^(-cfg.SoundingSNR/10);
 noisy = double(rx)+sqrt(variance)*baseNoise;
@@ -46,7 +46,7 @@ scene = struct('Config',cfg,'Front',front,'Channel',channel,'Tail',tail, ...
     'TrueOffset',double(trueOffset),'UplinkOffset',offset,'UplinkCFO',frequency, ...
     'ULSamples',samples,'ULCleanSamples',cleanSamples,'ULTruth',truth,'ULNoise',muGuardNoise(noisy,r,tail), ...
     'HDownlink',permute(Hul,[1 2 4 3]),'Seed',seed);
-noiseStream = RandStream('mt19937ar','Seed',seed+400000);
+noiseStream = RandStream('mt19937ar','Seed',muSeed(seed,14));
 scene.DataNoise = complex(randn(noiseStream,r.Samples+tail,cfg.Users*cfg.UERx), ...
     randn(noiseStream,r.Samples+tail,cfg.Users*cfg.UERx))/sqrt(2*double(r.OFDM.Nfft));
 end

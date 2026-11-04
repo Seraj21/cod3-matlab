@@ -42,7 +42,7 @@ end
 if method=="LS"
     estimate = state.LS;
     variance = state.VarianceLS;
-elseif method=="LMMSE"
+elseif method=="LMMSE" || (method=="CNN" && blend==0)
     estimate = state.Wiener;
     variance = state.VarianceWiener;
 else
@@ -55,7 +55,8 @@ else
     variance = state.VarianceWiener;
     for u = 1:U
         m = models.(layouts{u}.Label);
-        variance(:,:,:,u) = variance(:,:,:,u).*m.VarianceFactor.CNN/max(m.VarianceFactor.LMMSE,eps);
+        ratio = m.VarianceFactor.CNN/max(m.VarianceFactor.LMMSE,eps);
+        variance(:,:,:,u) = variance(:,:,:,u).*((1-blend)+blend*ratio);
     end
 end
 end

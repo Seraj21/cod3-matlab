@@ -1,0 +1,71 @@
+name: MU TDD downlink BER and goodput
+on:
+  push:
+    branches: [mu-downlink-tdlc]
+    paths: [.github/workflows/mu_full.yml]
+permissions:
+  contents: read
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v7
+      - uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2025b
+          products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
+      - uses: matlab-actions/run-tests@v3
+        with:
+          source-folder: .
+          select-by-folder: mu_mimo/tests
+      - name: Verify small end-to-end training and both array sizes
+        uses: matlab-actions/run-command@v3
+        with:
+          command: run_mu_mimo(32,1,"smoke_training",[0 10 20],0,Mode="train",NumRB=12,TrainingFrames=4,ValidationFrames=2,BERValidationFrames=2,Epochs=2,ModelFile="smoke_model.mat"); run_mu_mimo(32,1,"smoke32",[0 10 20],9000000,NumRB=12,ModelFile="smoke_model.mat"); run_mu_mimo(64,1,"smoke64",[0 10 20],9000000,NumRB=12,ModelFile="smoke_model.mat");
+      - name: Train and validate the frozen joint CNNs
+        uses: matlab-actions/run-command@v3
+        with:
+          command: run_mu_mimo(32,1,"training",[0 10 20],0,Mode="train",TrainingFrames=256,ValidationFrames=32,BERValidationFrames=16,Epochs=45,ModelFile="models/mu_cnn.mat");
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mu-frozen-model
+          path: models/mu_cnn.mat
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: mu-training-report
+          path: |
+            training/
+            smoke_training/
+            smoke32/
+            smoke64/
+          if-no-files-found: warn
+  evaluate:
+    needs: train
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        array: [32, 64]
+        batch: [0, 1, 2, 3, 4, 5, 6, 7]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
+        with:
+          name: mu-frozen-model
+          path: models
+      - uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2025b
+          products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
+      - uses: matlab-actions/run-command@v3
+        with:
+          command: run_mu_mimo(${{ matrix.array }},16,"results",[0:.5:10 11:20],10000000+1000*${{ matrix.batch }},ModelFile="models/mu_cnn.mat");
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mu-${{ matrix.array }}-batch-${{ matrix.batch }}
+          path: results/
+          if-no-files-found: error
