@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Verify raw MATLAB MU packet counts and draw the requested comparisons."""
-import argparse, base64, csv, hashlib, io, json, math, shutil, zipfile
+import argparse, base64, csv, hashlib, io, json, math, os, shutil, subprocess, zipfile
 from pathlib import Path
 import numpy as np
 from scipy.io import loadmat
@@ -146,10 +146,31 @@ def plot(array,p,kind,ber,gp,bits,out):
     fig.supxlabel(foot,fontsize=8,color="#444444")
     path=out/f"MU-{PRECODERS[p]}-{kind}-BS{array}.png"
     fig.savefig(path,dpi=175);plt.close(fig)
+def collect_auxiliary(root):
+    """Read completed controls of this exact experiment; never change a repository."""
+    if not (os.getenv("GITHUB_ACTIONS")=="true" and os.getenv("GH_REPO")=="Seraj21/cod3-matlab"):
+        return
+    directory=root/"diagnostics";directory.mkdir(parents=True,exist_ok=True)
+    expected=[
+        (13339340301,"rate_probe.csv","3f58b539b4a2ae202fab03c1dc7d017b968f6148ebb4195656e07c3e5cc3aa9b",41857825835),
+        (13336503683,"cross_probe.csv","549d873f7c1f3441bf50cbb2e7914d10e7430e86beb90efafd7331141248c73d",41854206157)]
+    manifest=[]
+    for aid,name,digest,run in expected:
+        data=subprocess.check_output(["gh","api",f"repos/Seraj21/cod3-matlab/actions/artifacts/{aid}/zip"])
+        assert hashlib.sha256(data).hexdigest()==digest
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            assert z.testzip() is None
+            matches=[n for n in z.namelist() if Path(n).name==name]
+            assert len(matches)==1
+            (directory/name).write_bytes(z.read(matches[0]))
+        manifest.append(dict(artifact_id=aid,run_id=run,sha256=digest,file=name))
+    (directory/"auxiliary_manifest.json").write_text(json.dumps(manifest,indent=2))
+
 def main():
     ap=argparse.ArgumentParser();ap.add_argument("--artifacts",type=Path,required=True)
     ap.add_argument("--output",type=Path,required=True);args=ap.parse_args()
     root=args.artifacts;out=args.output;out.mkdir(parents=True,exist_ok=True)
+    collect_auxiliary(root)
     rawout=out/"raw";rawout.mkdir(exist_ok=True)
     allrows=[];paired=[];hashes=set();summary={"source_commit":"73c537ef9870648df6dccd86b56c498bf4e4db29",
         "run_id":41841619172,"model":model_info(root),"arrays":{}}
@@ -207,6 +228,7 @@ def main():
         "Goodput cannot exceed resource-count ceiling","No fitted, sorted, clipped or forced-monotonic BER curves"]
     writecsv(out/"MU-paired-CNN-LMMSE.csv",paired)
     writecsv(out/"MU-all-metrics.csv",allrows,FIELDS)
+    if (root/"diagnostics/rate_probe.csv").exists():summary["rate_control"]=rows((root/"diagnostics/rate_probe.csv").read_bytes())
     (out/"summary.json").write_text(json.dumps(summary,ensure_ascii=False,indent=2),encoding="utf-8")
     for name in ["mu-training-report.zip","mu-frozen-model.zip","artifact_manifest.json","training_summary.json"]:
         if (root/name).exists():shutil.copy2(root/name,out/name)
@@ -279,6 +301,16 @@ Goodput = مجموع بتات الحمولات الخالية من الخطأ و
     text+="\n## تشخيص التسطح\nاختبار تبادل القناة تحت الحركة أعطى خطأ نسبيًا صفريًا بين المرجع المتبادل ومرجع التنزيل المباشر. في الاختبار المصغر، بلغ خطأ نموذج القناة القطري نحو1.39% من قدرة الإشارة عند120 km/h و1µs، مقابل نحو0.55% عند30ns مع السرعة نفسها، ونحو1% عند1µs مع سرعة صفر. تطابقت النتائج تقريبًا بين توليد path gains بالمعدل المختزل والمعدل الكامل. هذه اختبارات لفصل أسباب الأداء، ولا تحل محل اختبار128 إطارًا.\n"
     text+="\nنجح المرجع الهادئ لـZF في فك جميع الحمولات عند20dB. فشلت حالات الانتشار1µs الشديدة حتى معPerfect CSI في الاختبار التشخيصي. يترك النموذج القطري ومجمعMMSE تداخلًا بين الرموز والحوامل لا يزيله إعطاء CSI مثاليًا، وقد يضخمه فصل الطبقات. توجد قياسات انتشار300ns وعروض precoding مختلفة فيdiagnostics، باستعمال الشبكة المجمدة دون إعادة اختيارها. هذه القياسات مبنية على إطارين لكل حالة وتفسر الحساسية فقط.\n"
     text+="\nاختبار إضافي فصلCSI المحطة عنCSI المستقبل عند300ns و20dB: نجح مرجعZF المثالي للطرفين في الحمولات الثماني، بينما فشلت الحمولات الثماني عند تقديرLMMSE في المحطة وحده أو في المستقبل وحده. خفضتCNN خطأ التقدير لدى المستقبل دون تحقيق فك حمولة ناجح في هذه العينة. [القياسات الخام للاختبار الإضافي](https://github.com/Seraj21/cod3-matlab/actions/runs/41854206157) تستعمل إطارين فقط، وهي تشخيصية ولا تدخل اختيار النموذج.\n"
+    if s.get("rate_control"):
+        text+="\n## اختبار منفصل لزيادة حمايةLDPC\nيحتفظ الاختبار الأساسي بمعدل0.5. الاختبار التالي خاص بـZF وBS64 وبنفسTDL-C الشديدة، على إطارين مستقلين وثماني حمولات لكل نقطة، وبالشبكة المجمدة نفسها. لا يدخل اختيارCNN ولا يمثل إثباتًا إحصائيًا عامًا. ينخفض سقف الموارد إلى94.976Mbit/s للمعدل1/4 وإلى47.488Mbit/s للمعدل1/8؛ الزيادة في الحماية تقابل انخفاض الحمولة.\n\n"
+        text+="| معدل الترميز المستهدف | SNR dB | BER LMMSE | BER CNN | Goodput LMMSE | Goodput CNN |\n|---|---|---|---|---|---|\n"
+        data=s["rate_control"]
+        for rate in [.25,.125]:
+            for snr in [0,4,8,12,16,20]:
+                select=lambda est:next(x for x in data if float(x["TargetCodeRate"])==rate and float(x["SNR_dB"])==snr and x["Estimator"]==est)
+                a=select("LMMSE");b=select("CNN")
+                text+=f"| {rate:g} | {snr} | {float(a['PostLDPC_BER']):.6g} | {float(b['PostLDPC_BER']):.6g} | {float(a['Goodput_Mbps']):.6g} | {float(b['Goodput_Mbps']):.6g} |\n"
+        text+="\nجميع قيمGoodput في الجدول بوحدةMbit/s. تظهر هذه العينة أن فائدة تحسينCSI تعتمد أيضًا على معدل الترميز ومنطقة الانتقال بين فشلLDPC ونجاحه؛ لا تكفي زيادة التدريب لضمان تسليم الحمولات عندمعدل ثابت مرتفع في كل القنوات.\n"
     text+="\n## التحقق وإعادة التشغيل\nنجحت الاختبارات الثمانية، بما فيها reciprocity لـTDL-C، فصلDM-RS، حفظ ترتيب ميزاتCNN، فك الترميز متعدد المستخدمين دون ضوضاء، والتحكم الزمني الكامل عاليSNR. نجح التدريب المصغر والتقييم لكلا حجمي المحطة قبل التدريب الموسع. يعيد محلل النتائج حساب كل قيمة من أخطاء كل مستخدم، ويقارنCSV معMAT، ويتحقق من تطابق أوزانCNN في جميع ملفات الاختبار.\n"
     text+="\nالمصدر: https://github.com/Seraj21/cod3-matlab/tree/mu-downlink-tdlc\n"
     text+="\nتشغيل المصدر علىcommit73c537ef9870648df6dccd86b56c498bf4e4db29. بذور التدريب تبدأ1000000، تحقق القناة2000000، تحققBER3000000 مع إزاحة الحجم، والاختبار10000000 مع إزاحة مستقلة لكلحزمة.\n"
