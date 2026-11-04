@@ -1,4 +1,5 @@
 name: Practical HBF 512-QAM BER
+# Use automatic TDL path-gain sampling for large arrays.
 on:
   workflow_dispatch:
   push:
