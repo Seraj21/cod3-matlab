@@ -1,0 +1,127 @@
+name: V2 exact-seed timeout recovery
+on:
+  push:
+    branches: [mu-cnn-v2]
+    paths: [.github/workflows/v2_recovery.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  evaluate:
+    strategy:
+      fail-fast: false
+      max-parallel: 12
+      matrix:
+        include:
+          - {antennas: 32, batch: 2, part: 0}
+          - {antennas: 32, batch: 2, part: 1}
+          - {antennas: 32, batch: 3, part: 0}
+          - {antennas: 32, batch: 3, part: 1}
+          - {antennas: 32, batch: 4, part: 0}
+          - {antennas: 32, batch: 4, part: 1}
+          - {antennas: 32, batch: 5, part: 0}
+          - {antennas: 32, batch: 5, part: 1}
+          - {antennas: 32, batch: 6, part: 0}
+          - {antennas: 32, batch: 6, part: 1}
+          - {antennas: 64, batch: 1, part: 0}
+          - {antennas: 64, batch: 1, part: 1}
+          - {antennas: 64, batch: 2, part: 0}
+          - {antennas: 64, batch: 2, part: 1}
+          - {antennas: 64, batch: 5, part: 0}
+          - {antennas: 64, batch: 5, part: 1}
+          - {antennas: 64, batch: 6, part: 0}
+          - {antennas: 64, batch: 6, part: 1}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ec00ae08f0e470071158768d92b8320c490784c3
+      - uses: actions/download-artifact@v8
+        with:
+          name: v2-frozen-model
+          run-id: 41908344154
+          github-token: ${{ github.token }}
+          path: v2_frozen
+      - uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2025b
+          products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
+      - name: Evaluate original frames without changing any physics or frozen weights
+        uses: matlab-actions/run-command@v3
+        with:
+          command: run_v2_mimo(${{ matrix.antennas }},8,'v2_results',[0:.5:10 11:20],20000000+${{ matrix.batch }}*100000+8*${{ matrix.part }});
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: v2-recovery-${{ matrix.antennas }}-${{ matrix.batch }}-${{ matrix.part }}
+          path: v2_results/
+          if-no-files-found: warn
+  merge:
+    needs: evaluate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: v2-recovery-*
+          path: recovery_parts
+      - uses: actions/download-artifact@v8
+        with:
+          name: v2-frozen-model
+          run-id: 41908344154
+          github-token: ${{ github.token }}
+          path: v2_frozen
+      - uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2025b
+          products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
+      - uses: matlab-actions/run-command@v3
+        with:
+          command: v2_merge_recovery('recovery_parts','recovery_merged','v2_frozen/v2_model.mat');
+      - uses: actions/upload-artifact@v7
+        with:
+          name: v2-evaluation-32-2
+          path: recovery_merged/v2-evaluation-32-2/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          name: v2-evaluation-32-3
+          path: recovery_merged/v2-evaluation-32-3/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          name: v2-evaluation-32-4
+          path: recovery_merged/v2-evaluation-32-4/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          name: v2-evaluation-32-5
+          path: recovery_merged/v2-evaluation-32-5/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          name: v2-evaluation-32-6
+          path: recovery_merged/v2-evaluation-32-6/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          name: v2-evaluation-64-1
+          path: recovery_merged/v2-evaluation-64-1/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          name: v2-evaluation-64-2
+          path: recovery_merged/v2-evaluation-64-2/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          name: v2-evaluation-64-5
+          path: recovery_merged/v2-evaluation-64-5/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          name: v2-evaluation-64-6
+          path: recovery_merged/v2-evaluation-64-6/
+          if-no-files-found: error

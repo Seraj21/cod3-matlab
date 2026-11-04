@@ -63,7 +63,7 @@ def figure_for_series(x, values, array, precoder, kind, payload_bits, frames,
     ax.set_xlabel("Downlink SNR (dB)")
     ax.set_title(f"{precoder} | BS {array}, 4 users, 4 Rx/user | TDL-C, 512-QAM, LDPC")
     ax.grid(True, which="both", alpha=.22)
-    ax.legend(loc="best", fontsize=11, framealpha=.95)
+    ax.legend(loc="best", fontsize=13, framealpha=.95)
     fig.supxlabel((measured_label+"\n" if measured_label else "")+foot,
                   fontsize=8, color="#444444")
     fig.savefig(destination, dpi=170)
