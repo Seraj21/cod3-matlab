@@ -1,0 +1,820 @@
+{
+  "source_commit": "73c537ef9870648df6dccd86b56c498bf4e4db29",
+  "run_id": 41841619172,
+  "model": {
+    "payload_validation": [
+      {
+        "CNNResidualMultiplier": "0",
+        "PostLDPC_BER": "0.395019202441077",
+        "CRC_BlockErrorRate": "1",
+        "PayloadBits": "13685760"
+      },
+      {
+        "CNNResidualMultiplier": "0.5",
+        "PostLDPC_BER": "0.392960200968013",
+        "CRC_BlockErrorRate": "1",
+        "PayloadBits": "13685760"
+      },
+      {
+        "CNNResidualMultiplier": "1",
+        "PostLDPC_BER": "0.391811561798541",
+        "CRC_BlockErrorRate": "1",
+        "PayloadBits": "13685760"
+      }
+    ],
+    "selected_multiplier": 1.0,
+    "channel_validation_tx": {
+      "MSE_LS": 3.744896111654782,
+      "MSE_LMMSE": 1.9218229158796616,
+      "MSE_CNN_FullResidual": 1.9231077454799057
+    },
+    "learning_tx": {
+      "records": 480,
+      "last": {
+        "Iteration": "480",
+        "Epoch": "10",
+        "LearnRate": "0.001",
+        "Loss": "0.274371832609177"
+      },
+      "columns": [
+        "Iteration",
+        "Epoch",
+        "LearnRate",
+        "Loss"
+      ]
+    },
+    "channel_validation_rx": {
+      "MSE_LS": 0.07631846231751094,
+      "MSE_LMMSE": 0.05922002947419889,
+      "MSE_CNN_FullResidual": 0.05340013885771591
+    },
+    "learning_rx": {
+      "records": 17280,
+      "last": {
+        "Iteration": "17280",
+        "Epoch": "45",
+        "LearnRate": "0.00016",
+        "Loss": "0.0495527647435665"
+      },
+      "columns": [
+        "Iteration",
+        "Epoch",
+        "LearnRate",
+        "Loss"
+      ]
+    }
+  },
+  "arrays": {
+    "32": {
+      "packets": 128,
+      "payload_bits_per_point": 6082560,
+      "maximum_goodput_Mbps": 190.08,
+      "selected_points": [
+        {
+          "precoder": "MR",
+          "snr": 0.0,
+          "BER": {
+            "LS": 0.4315087726220539,
+            "LMMSE": 0.42074669218223903,
+            "CNN": 0.4200321903935185,
+            "Perfect CSI": 0.390154967645202
+          },
+          "Goodput_Mbps": {
+            "LS": 0.0,
+            "LMMSE": 0.0,
+            "CNN": 0.0,
+            "Perfect CSI": 0.0
+          },
+          "CNN_minus_LMMSE_BER_CI95": [
+            -0.0010786823311237372,
+            -0.0003561000631313131
+          ]
+        },
+        {
+          "precoder": "MR",
+          "snr": 4.0,
+          "BER": {
+            "LS": 0.414096038510101,
+            "LMMSE": 0.4040489530723906,
+            "CNN": 0.4023304332386364,
+            "Perfect CSI": 0.36733924531776097
+          },
+          "Goodput_Mbps": {
+            "LS": 0.0,
+            "LMMSE": 0.0,
+            "CNN": 0.0,
+            "Perfect CSI": 0.0
+          },
+          "CNN_minus_LMMSE_BER_CI95": [
+            -0.0020734731757680977,
+            -0.0013578123355955385
+          ]
+        },
+        {
+          "precoder": "MR",
+          "snr": 8.0,
+          "BER": {
+            "LS": 0.4012121540930135,
+            "LMMSE": 0.3910276265256734,
+            "CNN": 0.3880195180976431,
+            "Perfect CSI": 0.344753031618266
+          },
+          "Goodput_Mbps": {
+            "LS": 0.0,
+            "LMMSE": 0.0,
+            "CNN": 0.0,
+            "Perfect CSI": 0.0
+          },
+          "CNN_minus_LMMSE_BER_CI95": [
+            -0.003364048196811869,
+            -0.002664486663510101
+          ]
+        },
+        {
+          "precoder": "MR",
+          "snr": 12.0,
+          "BER": {
+            "LS": 0.39272510258838383,
+            "LMMSE": 0.3824051057449495,
+            "CNN": 0.3777305936973906,
+            "Perfect CSI": 0.3244311605639731
+          },
+          "Goodput_Mbps": {
+            "LS": 0.0,
+            "LMMSE": 0.0,
+            "CNN": 0.0,
+            "Perfect CSI": 0.0
+          },
+          "CNN_minus_LMMSE_BER_CI95": [
+            -0.005066629018045034,
+            -0.004279941340488215
+          ]
+        },
+        {
+          "precoder": "MR",
+          "snr": 16.0,
+          "BER": {
+            "LS": 0.3883986347853535,
+            "LMMSE": 0.3774782328493266,
+            "CNN": 0.37191347064393937,
+            "Perfect CSI": 0.31229959096170035
+          },
+          "Goodput_Mbps": {
+            "LS": 0.0,
+            "LMMSE": 0.0,
+            "CNN": 0.0,
+            "Perfect CSI": 0.0
+          },
+          "CNN_minus_LMMSE_BER_CI95": [
+            -0.005998494055134681,
+            -0.005123163602167509
+          ]
+        },
+        {
+          "precoder": "MR",
+          "snr": 20.0,
+          "BER": {
+            "LS": 0.3865515506628788,
+            "LMMSE": 0.3753779658564815,
+            "CNN": 0.36929319234006736,
+            "Perfect CSI": 0.309795053398569
+          },
+          "Goodput_Mbps": {
+            "LS": 0.0,
+            "LMMSE": 0.0,
+            "CNN": 0.0,
+            "Perfect CSI": 0.0
+          },
+          "CNN_minus_LMMSE_BER_CI95": [
+            -0.006525048663720538,
+            -0.005638061934448653
+          ]
+        },
+        {
+          "precoder": "ZF",
+          "snr": 0.0,
+          "BER": {
+            "LS": 0.4316429266624579,
+            "LMMSE": 0.4201793323863636,
+            "CNN": 0.4190843986742424,
+            "Perfect CSI": 0.3811003919402357
+          },
+          "Goodput_Mbps": {
+            "LS": 0.0,
+            "LMMSE": 0.0,
+            "CNN": 0.0,
+            "Perfect CSI": 0.0
+          },
+          "CNN_minus_LMMSE_BER_CI95": [
+            -0.0014801374750105219,
+            -0.0007084106034301348
+          ]
+        },
+        {
+          "precoder": "ZF",
+          "snr": 4.0,
+          "BER": {
+            "LS": 0.4121238425925926,
+            "LMMSE": 0.4000590212015993,
+            "CNN": 0.39811937736742425,
+            "Perfect CSI": 0.34902919165614477
+          },
+          "Goodput_Mbps": {
+            "LS": 0.0,
+            "LMMSE": 0.0,
+            "CNN": 0.0,
+            "Perfect CSI": 0.0
+          },
+          "CNN_minus_LMMSE_BER_CI95": [
+            -0.002285226121896044,
+            -0.0016019488504840067
+          ]
+        },
+        {
+          "precoder": "ZF",
+          "snr": 8.0,
+          "BER": {
+            "LS": 0.3967911537247475,
+            "LMMSE": 0.38414483375420877,
+            "CNN": 0.3811949245054714,
+            "Perfect CSI": 0.31726559211910776
+          },
+          "Goodput_Mbps": {
+            "LS": 0.0,
+            "LMMSE": 0.0,
+            "CNN": 0.0,
+            "Perfect CSI": 0.0
+          },
+          "CNN_minus_LMMSE_BER_CI95": [
+            -0.0033397163365425082,
+            -0.00257440123895202
+          ]
+        },
+        {
+          "precoder": "ZF",
+          "snr": 12.0,
+          "BER": {
+            "LS": 0.38692244712752527,
+            "LMMSE": 0.3740101207386364,
+            "CNN": 0.3698288220749158,
+            "Perfect CSI": 0.28968740135732324
+          },
+          "Goodput_Mbps": {
+            "LS": 0.0,
+            "LMMSE": 0.0,
+            "CNN": 0.0,
+            "Perfect CSI": 0.0
+          },
+          "CNN_minus_LMMSE_BER_CI95": [
+            -0.004550900443234428,
+            -0.0038048042271675085
+          ]
+        },
+        {
+          "precoder": "ZF",
+          "snr": 16.0,
+          "BER": {
+            "LS": 0.38117371632996633,
+            "LMMSE": 0.36903228246001685,
+            "CNN": 0.3632758246527778,
+            "Perfect CSI": 0.2713290127840909
+          },
+          "Goodput_Mbps": {
+            "LS": 0.0,
+            "LMMSE": 0.0,
+            "CNN": 0.0,
+            "Perfect CSI": 0.0
+          },
+          "CNN_minus_LMMSE_BER_CI95": [
+            -0.006162701231060606,
+            -0.005357924952651515
+          ]
+        },
+        {
+          "precoder": "ZF",
+          "snr": 20.0,
+          "BER": {
+            "LS": 0.37870419691708757,
+            "LMMSE": 0.36647973879419193,
+            "CNN": 0.3602981310500842,
+            "Perfect CSI": 0.26460930923821546
+          },
+          "Goodput_Mbps": {
+            "LS": 0.0,
+            "LMMSE": 0.0,
+            "CNN": 0.0,
+            "Perfect CSI": 0.0
+          },
+          "CNN_minus_LMMSE_BER_CI95": [
+            -0.006614653205229377,
+            -0.005759569161668772
+          ]
+        },
+        {
+          "precoder": "PZF",
+          "snr": 0.0,
+          "BER": {
+            "LS": 0.432095367739899,
+            "LMMSE": 0.43548177083333334,
+            "CNN": 0.4348657473169192,
+            "Perfect CSI": 0.39124973695286197
+          },
+          "Goodput_Mbps": {
+            "LS": 0.0,
+            "LMMSE": 0.0,
+            "CNN": 0.0,
+            "Perfect CSI": 0.0
+          },
+          "CNN_minus_LMMSE_BER_CI95": [
+            -0.0009727853075021045,
+            -0.00026353213120791256
+          ]
+        },
+        {
+          "precoder": "PZF",
+          "snr": 4.0,
+          "BER": {
+            "LS": 0.41229564525462964,
+            "LMMSE": 0.4210745146780303,
+            "CNN": 0.41988159590698654,
+            "Perfect CSI": 0.36053043455387207
+          },
+          "Goodput_Mbps": {
+            "LS": 0.0,
+            "LMMSE": 0.0,
+            "CNN": 0.0,
+            "Perfect CSI": 0.0
+          },
+          "CNN_minus_LMMSE_BER_CI95": [
+            -0.0015746905908038719,
+            -0.0008124827375315658
+          ]
+        },
+        {
+          "precoder": "PZF",
+          "snr": 8.0,
+          "BER": {
+            "LS": 0.3962530579229798,
+            "LMMSE": 0.41241253682659934,
+            "CNN": 0.410810415351431,
+            "Perfect CSI": 0.3308192603114478
+          },
+          "Goodput_Mbps": {
+            "LS": 0.0,
+            "LMMSE": 0.0,
+            "CNN": 0.0,
+            "Perfect CSI": 0.0
+          },
+          "CNN_minus_LMMSE_BER_CI95": [
+            -0.002002779257417929,
+            -0.001202117200652357
+          ]
+        },
+        {
+          "precoder": "PZF",
+          "snr": 12.0,
+          "BER": {
+            "LS": 0.38589623448021887,
+            "LMMSE": 0.40892617582070706,
+            "CNN": 0.4071032591540404,
+            "Perfect CSI": 0.3044318510627104
+          },
+          "Goodput_Mbps": {
+            "LS": 0.0,
+            "LMMSE": 0.0,
+            "CNN": 0.0,
+            "Perfect CSI": 0.0
+          },
+          "CNN_minus_LMMSE_BER_CI95": [
+            -0.0021885562986637204,
+            -0.0014620488741582491
+          ]
+        },
+        {
+          "precoder": "PZF",
+          "snr": 16.0,
+          "BER": {
+            "LS": 0.38020882654671717,
+            "LMMSE": 0.4076586174242424,
+            "CNN": 0.40557166719276094,
+            "Perfect CSI": 0.2865145596590909
+          },
+          "Goodput_Mbps": {
+            "LS": 0.0,
+            "LMMSE": 0.0,
+            "CNN": 0.0,
+            "Perfect CSI": 0.0
+          },
+          "CNN_minus_LMMSE_BER_CI95": [
+            -0.002454562717013889,
+            -0.0017073238899410776
+          ]
+        },
+        {
+          "precoder": "PZF",
+          "snr": 20.0,
+          "BER": {
+            "LS": 0.3773263231271044,
+            "LMMSE": 0.4076372448442761,
+            "CNN": 0.40538901383627945,
+            "Perfect CSI": 0.2797003235479798
+          },
+          "Goodput_Mbps": {
+            "LS": 0.0,
+            "LMMSE": 0.0,
+            "CNN": 0.0,
+            "Perfect CSI": 0.0
+          },
+          "CNN_minus_LMMSE_BER_CI95": [
+            -0.0026059751157407407,
+            -0.0018939270636047978
+          ]
+        }
+      ],
+      "CNN_BER_better_points": 93,
+      "CNN_BER_worse_points": 0,
+      "CNN_BER_tied_points": 0
+    },
+    "64": {
+      "packets": 128,
+      "payload_bits_per_point": 6082560,
+      "maximum_goodput_Mbps": 190.08,
+      "selected_points": [
+        {
+          "precoder": "MR",
+          "snr": 0.0,
+          "BER": {
+            "LS": 0.4246993042403199,
+            "LMMSE": 0.4139761876578283,
+            "CNN": 0.41269169560185187,
+            "Perfect CSI": 0.3815952493686869
+          },
+          "Goodput_Mbps": {
+            "LS": 0.0,
+            "LMMSE": 0.0,
+            "CNN": 0.0,
+            "Perfect CSI": 0.0
+          },
+          "CNN_minus_LMMSE_BER_CI95": [
+            -0.0016479985400883836,
+            -0.0009029010811237375
+          ]
+        },
+        {
+          "precoder": "MR",
+          "snr": 4.0,
+          "BER": {
+            "LS": 0.40884709727483165,
+            "LMMSE": 0.39843125263047136,
+            "CNN": 0.39623086332070706,
+            "Perfect CSI": 0.3586659235585017
+          },
+          "Goodput_Mbps": {
+            "LS": 0.0,
+            "LMMSE": 0.0,
+            "CNN": 0.0,
+            "Perfect CSI": 0.0
+          },
+          "CNN_minus_LMMSE_BER_CI95": [
+            -0.002555009732744107,
+            -0.0018411409011994955
+          ]
+        },
+        {
+          "precoder": "MR",
+          "snr": 8.0,
+          "BER": {
+            "LS": 0.3972929161405724,
+            "LMMSE": 0.3868326822916667,
+            "CNN": 0.38333300452441077,
+            "Perfect CSI": 0.33631858954124577
+          },
+          "Goodput_Mbps": {
+            "LS": 0.0,
+            "LMMSE": 0.0,
+            "CNN": 0.0,
+            "Perfect CSI": 0.0
+          },
+          "CNN_minus_LMMSE_BER_CI95": [
+            -0.003903455124158249,
+            -0.00310064758917298
+          ]
+        },
+        {
+          "precoder": "MR",
+          "snr": 12.0,
+          "BER": {
+            "LS": 0.3905363859953704,
+            "LMMSE": 0.3800062802504209,
+            "CNN": 0.3752801452020202,
+            "Perfect CSI": 0.31865596064814816
+          },
+          "Goodput_Mbps": {
+            "LS": 0.0,
+            "LMMSE": 0.0,
+            "CNN": 0.0,
+            "Perfect CSI": 0.0
+          },
+          "CNN_minus_LMMSE_BER_CI95": [
+            -0.005139789003314395,
+            -0.004306237834069865
+          ]
+        },
+        {
+          "precoder": "MR",
+          "snr": 16.0,
+          "BER": {
+            "LS": 0.3873060027356902,
+            "LMMSE": 0.3763438420664983,
+            "CNN": 0.3706276633522727,
+            "Perfect CSI": 0.3105603561658249
+          },
+          "Goodput_Mbps": {
+            "LS": 0.0,
+            "LMMSE": 0.0,
+            "CNN": 0.0,
+            "Perfect CSI": 0.0
+          },
+          "CNN_minus_LMMSE_BER_CI95": [
+            -0.006119298453282828,
+            -0.005304004399463384
+          ]
+        },
+        {
+          "precoder": "MR",
+          "snr": 20.0,
+          "BER": {
+            "LS": 0.38587913641624577,
+            "LMMSE": 0.374782328493266,
+            "CNN": 0.3685395622895623,
+            "Perfect CSI": 0.3108345828072391
+          },
+          "Goodput_Mbps": {
+            "LS": 0.0,
+            "LMMSE": 0.0,
+            "CNN": 0.0,
+            "Perfect CSI": 0.0
+          },
+          "CNN_minus_LMMSE_BER_CI95": [
+            -0.006677287194865319,
+            -0.00582598034380261
+          ]
+        },
+        {
+          "precoder": "ZF",
+          "snr": 0.0,
+          "BER": {
+            "LS": 0.42399729719065654,
+            "LMMSE": 0.4117494936342593,
+            "CNN": 0.41061230797558923,
+            "Perfect CSI": 0.36941583806818185
+          },
+          "Goodput_Mbps": {
+            "LS": 0.0,
+            "LMMSE": 0.0,
+            "CNN": 0.0,
+            "Perfect CSI": 0.0
+          },
+          "CNN_minus_LMMSE_BER_CI95": [
+            -0.0014885344328703705,
+            -0.0007792771464646465
+          ]
+        },
+        {
+          "precoder": "ZF",
+          "snr": 4.0,
+          "BER": {
+            "LS": 0.405810546875,
+            "LMMSE": 0.3929784498632155,
+            "CNN": 0.39073712384259257,
+            "Perfect CSI": 0.336809336858165
+          },
+          "Goodput_Mbps": {
+            "LS": 0.0,
+            "LMMSE": 0.0,
+            "CNN": 0.0,
+            "Perfect CSI": 0.0
+          },
+          "CNN_minus_LMMSE_BER_CI95": [
+            -0.0026120704111426765,
+            -0.0018600597445812292
+          ]
+        },
+        {
+          "precoder": "ZF",
+          "snr": 8.0,
+          "BER": {
+            "LS": 0.3921112163299663,
+            "LMMSE": 0.3794923519044613,
+            "CNN": 0.3758539167718855,
+            "Perfect CSI": 0.3061359033038721
+          },
+          "Goodput_Mbps": {
+            "LS": 0.0,
+            "LMMSE": 0.0,
+            "CNN": 0.0,
+            "Perfect CSI": 0.0
+          },
+          "CNN_minus_LMMSE_BER_CI95": [
+            -0.004023971814499158,
+            -0.0032474772135416665
+          ]
+        },
+        {
+          "precoder": "ZF",
+          "snr": 12.0,
+          "BER": {
+            "LS": 0.38430085358796295,
+            "LMMSE": 0.37130221485690235,
+            "CNN": 0.3662449692234849,
+            "Perfect CSI": 0.28112028488005053
+          },
+          "Goodput_Mbps": {
+            "LS": 0.0,
+            "LMMSE": 0.0,
+            "CNN": 0.0,
+            "Perfect CSI": 0.0
+          },
+          "CNN_minus_LMMSE_BER_CI95": [
+            -0.00544836795691288,
+            -0.00467467234190867
+          ]
+        },
+        {
+          "precoder": "ZF",
+          "snr": 16.0,
+          "BER": {
+            "LS": 0.379927530513468,
+            "LMMSE": 0.36717927977693604,
+            "CNN": 0.3616796217382155,
+            "Perfect CSI": 0.26744331334175087
+          },
+          "Goodput_Mbps": {
+            "LS": 0.0,
+            "LMMSE": 0.0,
+            "CNN": 0.0,
+            "Perfect CSI": 0.0
+          },
+          "CNN_minus_LMMSE_BER_CI95": [
+            -0.00588010640256734,
+            -0.005122678609006734
+          ]
+        },
+        {
+          "precoder": "ZF",
+          "snr": 20.0,
+          "BER": {
+            "LS": 0.3782476457281145,
+            "LMMSE": 0.3655227404250842,
+            "CNN": 0.35957705308291243,
+            "Perfect CSI": 0.26454864399200334
+          },
+          "Goodput_Mbps": {
+            "LS": 0.0,
+            "LMMSE": 0.0,
+            "CNN": 0.0,
+            "Perfect CSI": 0.0
+          },
+          "CNN_minus_LMMSE_BER_CI95": [
+            -0.006365917475536617,
+            -0.005524807811184765
+          ]
+        },
+        {
+          "precoder": "PZF",
+          "snr": 0.0,
+          "BER": {
+            "LS": 0.4243282433712121,
+            "LMMSE": 0.4292207557344276,
+            "CNN": 0.4284446022727273,
+            "Perfect CSI": 0.3802061960753367
+          },
+          "Goodput_Mbps": {
+            "LS": 0.0,
+            "LMMSE": 0.0,
+            "CNN": 0.0,
+            "Perfect CSI": 0.0
+          },
+          "CNN_minus_LMMSE_BER_CI95": [
+            -0.0011455785064183501,
+            -0.00041116322732533687
+          ]
+        },
+        {
+          "precoder": "PZF",
+          "snr": 4.0,
+          "BER": {
+            "LS": 0.40572752262205386,
+            "LMMSE": 0.4168897635206229,
+            "CNN": 0.41571164115109427,
+            "Perfect CSI": 0.34940436263678454
+          },
+          "Goodput_Mbps": {
+            "LS": 0.0,
+            "LMMSE": 0.0,
+            "CNN": 0.0,
+            "Perfect CSI": 0.0
+          },
+          "CNN_minus_LMMSE_BER_CI95": [
+            -0.001538669573337542,
+            -0.0008174066511468857
+          ]
+        },
+        {
+          "precoder": "PZF",
+          "snr": 8.0,
+          "BER": {
+            "LS": 0.3916058370159933,
+            "LMMSE": 0.41039101957070706,
+            "CNN": 0.40882227220117845,
+            "Perfect CSI": 0.32016864609638046
+          },
+          "Goodput_Mbps": {
+            "LS": 0.0,
+            "LMMSE": 0.0,
+            "CNN": 0.0,
+            "Perfect CSI": 0.0
+          },
+          "CNN_minus_LMMSE_BER_CI95": [
+            -0.0019368530684448655,
+            -0.0012080398713699494
+          ]
+        },
+        {
+          "precoder": "PZF",
+          "snr": 12.0,
+          "BER": {
+            "LS": 0.3833001236321549,
+            "LMMSE": 0.4081000434027778,
+            "CNN": 0.4061022003893098,
+            "Perfect CSI": 0.2962415496106902
+          },
+          "Goodput_Mbps": {
+            "LS": 0.0,
+            "LMMSE": 0.0,
+            "CNN": 0.0,
+            "Perfect CSI": 0.0
+          },
+          "CNN_minus_LMMSE_BER_CI95": [
+            -0.0023723769268202866,
+            -0.0016236461292613636
+          ]
+        },
+        {
+          "precoder": "PZF",
+          "snr": 16.0,
+          "BER": {
+            "LS": 0.37882043087121214,
+            "LMMSE": 0.4074042837226431,
+            "CNN": 0.405272286668771,
+            "Perfect CSI": 0.2825589883207071
+          },
+          "Goodput_Mbps": {
+            "LS": 0.0,
+            "LMMSE": 0.0,
+            "CNN": 0.0,
+            "Perfect CSI": 0.0
+          },
+          "CNN_minus_LMMSE_BER_CI95": [
+            -0.002535285307502104,
+            -0.0017082938762626267
+          ]
+        },
+        {
+          "precoder": "PZF",
+          "snr": 20.0,
+          "BER": {
+            "LS": 0.37693750657617847,
+            "LMMSE": 0.4072896938131313,
+            "CNN": 0.4050866740319865,
+            "Perfect CSI": 0.27919543744739056
+          },
+          "Goodput_Mbps": {
+            "LS": 0.0,
+            "LMMSE": 0.0,
+            "CNN": 0.0,
+            "Perfect CSI": 0.0
+          },
+          "CNN_minus_LMMSE_BER_CI95": [
+            -0.002602029408670033,
+            -0.0017855680831755055
+          ]
+        }
+      ],
+      "CNN_BER_better_points": 93,
+      "CNN_BER_worse_points": 0,
+      "CNN_BER_tied_points": 0
+    }
+  },
+  "model_fingerprint": "1460d1bf7c270308863417dcdd0df2f9d7d40a4161f84f73db4f808ebbe2f6c6",
+  "checks": [
+    "16 ZIP CRC checks",
+    "Raw per-user counts reproduce every CSV and MAT metric",
+    "128 independent channel frames per array",
+    "Identical frozen CNN weights in all 16 jobs",
+    "No duplicated packet/user/precoder/estimator/SNR row",
+    "Goodput excludes erroneous or CRC-failed blocks",
+    "Goodput cannot exceed resource-count ceiling",
+    "No fitted, sorted, clipped or forced-monotonic BER curves"
+  ]
+}
