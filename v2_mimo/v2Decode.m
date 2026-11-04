@@ -1,6 +1,9 @@
 function [errors,failed,details]=v2Decode(input,h,variance,payload,cfg,r)
 % Both candidates use receiver information only. CRC selects a successful retry.
-[bits,failed,details]=pass(input,h,variance,cfg,r,false,true(1,cfg.Users));
+users=true(1,cfg.Users);
+if isfield(cfg,'ActiveUsers'),users(:)=false;users(cfg.ActiveUsers)=true;end
+[bits,failed,details]=pass(input,h,variance,cfg,r,false,users);
+failed(~users)=false;
 firstFailed=failed;
 if cfg.DecoderDual && any(failed)
  [retry,retryFailed,retryDetails]=pass(input,h,variance,cfg,r,true,failed);
