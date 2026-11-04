@@ -1,0 +1,64 @@
+name: Final verified MU figures and frozen model
+on:
+  push:
+    branches: [mu-downlink-tdlc]
+    paths: [.github/workflows/mu_final.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: Seraj21/cod3-matlab
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: mu-downlink-tdlc
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: |
+          python -m py_compile tools/analyze_mu.py
+          python -m pip install numpy scipy matplotlib
+      - name: Wait for independent test data and diagnostics
+        run: |
+          gh run watch 41841619172 --exit-status --interval 60
+          gh run watch 41852805424 --exit-status --interval 60
+      - name: Download and verify the full experiment
+        shell: python
+        run: |
+          import concurrent.futures,hashlib,json,pathlib,subprocess,re,shutil
+          root=pathlib.Path("mu_artifacts");root.mkdir(exist_ok=True)
+          metadata=json.loads(subprocess.check_output(["gh","api","repos/Seraj21/cod3-matlab/actions/runs/41841619172/artifacts?per_page=100"]))
+          allowed={"mu-frozen-model","mu-training-report"}|{f"mu-{a}-batch-{b}" for a in [32,64] for b in range(8)}
+          selected=[a for a in metadata["artifacts"] if a["name"] in allowed]
+          assert {a["name"] for a in selected}==allowed and len(selected)==len(allowed)
+          def download(a):
+              path=root/(a["name"]+".zip")
+              with path.open("wb") as f:subprocess.run(["gh","api",f'repos/Seraj21/cod3-matlab/actions/artifacts/{a["id"]}/zip'],stdout=f,check=True)
+              actual=hashlib.sha256(path.read_bytes()).hexdigest()
+              if a.get("digest"):assert a["digest"]=="sha256:"+actual
+              return {"id":a["id"],"name":a["name"],"sha256":actual,"bytes":path.stat().st_size,"run_id":41841619172,"source_commit":"73c537ef9870648df6dccd86b56c498bf4e4db29"}
+          with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:manifest=list(pool.map(download,selected))
+          (root/"artifact_manifest.json").write_text(json.dumps(manifest,indent=2))
+          log=subprocess.check_output(["gh","api","repos/Seraj21/cod3-matlab/actions/jobs/126614394133/logs"]).decode("utf-8-sig")
+          summary={}
+          for key,pattern in {"BlendTX":r"TX validation-trained residual blend ([0-9.]+)","BlendRX":r"RX validation-trained residual blend ([0-9.]+)","BlendMultiplier":r"Frozen post-LDPC validation multiplier ([0-9.]+)"}.items():
+              summary[key]=float(re.findall(pattern,log)[-1])
+          (root/"training_summary.json").write_text(json.dumps(summary,indent=2))
+          subprocess.run(["git","pull","--ff-only","origin","mu-downlink-tdlc"],check=True)
+          for folder in ["mu-diagnostics","mu-sensitivity"]:
+              shutil.copytree(pathlib.Path("results")/folder,root/"diagnostics"/folder,dirs_exist_ok=True)
+      - name: Recompute metrics and build scientific figures
+        run: python tools/analyze_mu.py --artifacts mu_artifacts --output mu_verified
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: MU-verified-final-results
+          path: |
+            MU-TDL-C-512QAM-MR-ZF-PZF.zip
+            mu_verified/
+          if-no-files-found: error

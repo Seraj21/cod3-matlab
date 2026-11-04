@@ -85,6 +85,8 @@ def writecsv(path,items,fields=None):
         writer.writeheader();writer.writerows(items)
 def model_info(root):
     info={}
+    if (root/"training_summary.json").exists():
+        info.update(json.loads((root/"training_summary.json").read_text()))
     matches=list(root.glob("mu-training-report.zip"))
     if matches:
         with zipfile.ZipFile(matches[0]) as z:
@@ -122,7 +124,8 @@ def plot(array,p,kind,ber,gp,bits,out):
                        edgecolors=COLORS[k],zorder=4)
     if kind=="BER":
         ax.set_yscale("log")
-        ax.set_ylim(10**math.floor(math.log10(1/bits)),1)
+        positive=np.where(ber[:,p,:]>0,ber[:,p,:],1/bits)
+        ax.set_ylim(10**math.floor(math.log10(float(positive.min()))),1)
         ax.set_ylabel("Payload BER after LDPC")
     else:
         ax.set_ylim(0,CAP*1.055);ax.set_ylabel("Sum payload goodput (Mbit/s)")
@@ -200,8 +203,9 @@ def main():
     writecsv(out/"MU-paired-CNN-LMMSE.csv",paired)
     writecsv(out/"MU-all-metrics.csv",allrows,FIELDS)
     (out/"summary.json").write_text(json.dumps(summary,ensure_ascii=False,indent=2),encoding="utf-8")
-    for name in ["mu-training-report.zip","mu-frozen-model.zip","artifact_manifest.json"]:
+    for name in ["mu-training-report.zip","mu-frozen-model.zip","artifact_manifest.json","training_summary.json"]:
         if (root/name).exists():shutil.copy2(root/name,out/name)
+    if (root/"diagnostics").exists():shutil.copytree(root/"diagnostics",out/"diagnostics",dirs_exist_ok=True)
     report=review(summary)
     (out/"MU-Review.md").write_text(report,encoding="utf-8")
     archive=out.parent/"MU-TDL-C-512QAM-MR-ZF-PZF.zip"
@@ -250,6 +254,8 @@ Goodput = مجموع بتات الحمولات الخالية من الخطأ و
 """
     m=s.get("model",{})
     text+=f"\nمعامل CNN المختار من تحقق BER: **{m.get('selected_multiplier','راجع ملف التدريب')}**.\n\n"
+    text+=f"معامل تصحيح المحطة: **{m.get('BlendTX','راجع سجل التدريب')}**؛ معامل تصحيح المستقبل قبل المعامل العام: **{m.get('BlendRX','راجع سجل التدريب')}**.\n"
+    text+="اختير LMMSE في المحطة لعدم تحسن تصحيح شبكة التنبؤ على التحقق، وبقيت CNN لدى المستقبل فعالة. لذلك يقصد منحنىCNN خط المعالجة المحسّن بالشبكة مع هذا الرجوع الموثق.\n\n"
     text+="| BS | Precoder | SNR dB | BER LS | BER LMMSE | BER CNN | BER Perfect | Goodput CNN Mbit/s |\n|---|---|---|---|---|---|---|---|\n"
     for array,info in s["arrays"].items():
         for p in info["selected_points"]:
@@ -260,6 +266,8 @@ Goodput = مجموع بتات الحمولات الخالية من الخطأ و
     for array,info in s["arrays"].items():
         text+=f"- BS{array}: تحسن {info['CNN_BER_better_points']}، تراجع {info['CNN_BER_worse_points']}، تعادل {info['CNN_BER_tied_points']} من93 نقطة.\n"
     text+="\nلا تعني زيادة قوة النموذج ضمان تفوقCNN في كلSNR. النتائج الخام وفروقBER وGoodput وفترات الثقة متاحة فيCSV، ويجب تفسير فروقها مع حجم العينة. قد ينشأ التسطح في هذه الظروف من تقادمCSI خلالTDD والتداخل المتبقي وICI وتشوهاتRF، إضافة إلى خطأ التقدير؛ اختبار المسار الهادئ عاليSNR يتحقق من فك حمولة المستخدمين لجميعprecoders.\n"
+    text+="\n## تشخيص التسطح\nاختبار تبادل القناة تحت الحركة أعطى خطأ نسبيًا صفريًا بين المرجع المتبادل ومرجع التنزيل المباشر. في الاختبار المصغر، بلغ خطأ نموذج القناة القطري نحو1.39% من قدرة الإشارة عند120 km/h و1µs، مقابل نحو0.55% عند30ns مع السرعة نفسها، ونحو1% عند1µs مع سرعة صفر. تطابقت النتائج تقريبًا بين توليد path gains بالمعدل المختزل والمعدل الكامل. هذه اختبارات لفصل أسباب الأداء، ولا تحل محل اختبار128 إطارًا.\n"
+    text+="\nنجح المرجع الهادئ لـZF في فك جميع الحمولات عند20dB. فشلت حالات الانتشار1µs الشديدة حتى معPerfect CSI في الاختبار التشخيصي. يترك النموذج القطري ومجمعMMSE تداخلًا بين الرموز والحوامل لا يزيله إعطاء CSI مثاليًا، وقد يضخمه فصل الطبقات. توجد قياسات انتشار300ns وعروض precoding مختلفة فيdiagnostics، باستعمال الشبكة المجمدة دون إعادة اختيارها. هذه القياسات مبنية على إطارين لكل حالة وتفسر الحساسية فقط.\n"
     text+="\n## التحقق وإعادة التشغيل\nنجحت الاختبارات الثمانية، بما فيها reciprocity لـTDL-C، فصلDM-RS، حفظ ترتيب ميزاتCNN، فك الترميز متعدد المستخدمين دون ضوضاء، والتحكم الزمني الكامل عاليSNR. نجح التدريب المصغر والتقييم لكلا حجمي المحطة قبل التدريب الموسع. يعيد محلل النتائج حساب كل قيمة من أخطاء كل مستخدم، ويقارنCSV معMAT، ويتحقق من تطابق أوزانCNN في جميع ملفات الاختبار.\n"
     text+="\nالمصدر: https://github.com/Seraj21/cod3-matlab/tree/mu-downlink-tdlc\n"
     text+="\nتشغيل المصدر علىcommit73c537ef9870648df6dccd86b56c498bf4e4db29. بذور التدريب تبدأ1000000، تحقق القناة2000000، تحققBER3000000 مع إزاحة الحجم، والاختبار10000000 مع إزاحة مستقلة لكلحزمة.\n"
