@@ -1,7 +1,12 @@
 function phase = muPhaseNoise(count,settings,seed)
 % Reuse the phase-noise filter, while preserving caller RNG state and seeds.
 persistent keys oscillators streams
-key = sprintf('%.14g,',[settings.SampleRate settings.PhaseNoiseLevel settings.PhaseNoiseOffset]);
+if isempty(keys)
+    keys = {};
+    oscillators = {};
+    streams = {};
+end
+key = sprintf('%.14g,',[count settings.SampleRate settings.PhaseNoiseLevel settings.PhaseNoiseOffset]);
 index = find(strcmp(keys,key),1);
 original = RandStream.getGlobalStream;
 restore = onCleanup(@()RandStream.setGlobalStream(original)); %#ok<NASGU>
