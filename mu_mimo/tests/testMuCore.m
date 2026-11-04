@@ -76,3 +76,26 @@ reset(ch);
 verifyEqual(testCase,tu,td);
 verifyEqual(testCase,Hul,permute(Hdl,[1 2 4 3]),'AbsTol',2e-5);
 end
+function testResourceMappingAndCDMSeparation(testCase)
+cfg = muConfig(32,NumRB=12,Quiet=true,Speed=0);
+r = muResources(cfg);
+verifyGreaterThan(testCase,r.PayloadBits,0);
+verifyEqual(testCase,r.FrameDuration,.00025,'AbsTol',1e-12);
+stream = RandStream('mt19937ar','Seed',443);
+G = complex(randn(stream,4,4),randn(stream,4,4));
+y = sum(reshape(r.ReferenceGrid,r.K,r.L,1,4).*reshape(G,1,1,4,4),4);
+samples = muPilotObservations(y,r,"DL");
+for u = 1:4
+ p = r.DownlinkLayout{u};
+ for g = 1:r.G
+  band = (g-1)*24+(1:24);
+  patch = samples(band,:,:,u);
+  for branch = 1:4
+   h = patch(:,:,branch);
+   verifyEqual(testCase,h(p.Observed),repmat(G(branch,u),p.Count,1),'AbsTol',1e-12);
+  end
+ end
+end
+verifyEqual(testCase,nnz(any(abs(r.SRS)>0,3)),r.K*4);
+verifyFalse(testCase,any(r.DataMask(any(abs(r.ReferenceGrid)>0,3))));
+end
