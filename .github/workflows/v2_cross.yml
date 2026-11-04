@@ -1,0 +1,38 @@
+name: V2 goodput bottleneck control
+on:
+  push:
+    branches: [mu-cnn-v2]
+    paths: [.github/workflows/v2_cross.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: v2-transmitter-model
+          run-id: 41905811099
+          github-token: ${{ github.token }}
+          path: v2_tx_training
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: v2-receiver-*
+          run-id: 41907505948
+          github-token: ${{ github.token }}
+          path: rx_models
+      - uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2025b
+          products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
+      - uses: matlab-actions/run-command@v3
+        with:
+          command: v2_cross_goodput;
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: v2-goodput-control
+          path: v2_cross_goodput.csv
