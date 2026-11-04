@@ -1,0 +1,38 @@
+name: Diagnose RF and Doppler residual errors
+on:
+  push:
+    branches: [practical-hbf-receiver]
+    paths:
+      - scripts/diagnose_rf.m
+      - .github/workflows/diagnose_rf.yml
+permissions:
+  contents: read
+  actions: read
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        array: [32, 64]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
+        with:
+          github-token: ${{ github.token }}
+          run-id: 41817163511
+          name: deepmimo-held-out-rays
+          path: external
+      - uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2025b
+          products: Communications_Toolbox 5G_Toolbox
+      - uses: matlab-actions/run-command@v3
+        with:
+          command: addpath('scripts'); diagnose_rf("external/deepmimo_i2_28b.mat","diagnostic", ${{ matrix.array }});
+      - uses: actions/upload-artifact@v7
+        with:
+          name: rf-diagnostic-${{ matrix.array }}
+          path: diagnostic/
+          if-no-files-found: error

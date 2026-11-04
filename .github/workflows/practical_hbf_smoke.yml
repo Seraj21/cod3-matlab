@@ -4,6 +4,7 @@ on:
     branches: [practical-hbf-receiver]
     paths:
       - "**.m"
+      - "!scripts/**"
       - hybridPrecoder.m
       - hybridCodebook.m
       - tests/testPracticalHybrid.m
