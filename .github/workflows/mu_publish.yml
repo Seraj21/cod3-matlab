@@ -1,0 +1,73 @@
+name: Publish MU experiment evidence
+on:
+  push:
+    branches: [mu-downlink-tdlc]
+    paths: [.github/workflows/mu_publish.yml]
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: Seraj21/cod3-matlab
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: mu-downlink-tdlc
+          fetch-depth: 1
+      - name: Read completed training evidence
+        run: gh run download 41841619172 --name mu-training-report --dir /tmp/mu-training-evidence
+      - name: Save validation evidence
+        shell: python
+        run: |
+          import csv,json,pathlib,shutil
+          src=pathlib.Path("/tmp/mu-training-evidence/training")
+          dst=pathlib.Path("results/mu-tdlc/training");dst.mkdir(parents=True,exist_ok=True)
+          for name in ["dataset.csv","learning_tx.csv","learning_rx.csv","validation_channel_tx.csv","validation_channel_rx.csv","validation_payload_ber.csv"]:
+              p=src/name
+              assert p.is_file(),p
+              shutil.copy2(p,dst/name)
+          rows=list(csv.DictReader((src/"validation_payload_ber.csv").open()))
+          print("POST_LDPC_VALIDATION",json.dumps(rows))
+          for link in ["tx","rx"]:
+              r=list(csv.DictReader((src/("validation_channel_"+link+".csv")).open()))
+              print(link.upper()+"_MSE",{key:sum(float(x[key]) for x in r)/len(r) for key in r[0] if key!="ChannelSeed"})
+      - name: Commit measured validation evidence
+        run: |
+          git config user.name "Seraj"
+          git config user.email "60238838+Seraj21@users.noreply.github.com"
+          git add results/mu-tdlc/training
+          git commit -m "Record held-out MU channel and post-LDPC validation"
+          git push origin HEAD:mu-downlink-tdlc
+      - name: Wait for verified final figures
+        run: gh run watch 41847844245 --exit-status --interval 60
+      - name: Download verified result package
+        run: gh run download 41847844245 --name MU-verified-results --dir /tmp/mu-final-evidence
+      - name: Save final simulation results and frozen model
+        shell: python
+        run: |
+          import pathlib,shutil,zipfile,json,hashlib
+          src=pathlib.Path("/tmp/mu-final-evidence")
+          archives=list(src.rglob("MU-TDL-C-512QAM-MR-ZF-PZF.zip"))
+          assert len(archives)==1
+          package=archives[0]
+          dst=pathlib.Path("results/mu-tdlc");dst.mkdir(parents=True,exist_ok=True)
+          with zipfile.ZipFile(package) as z:
+              assert z.testzip() is None
+              for name in z.namelist():
+                  if "/" not in name and (name.endswith((".png",".csv",".json",".md")) or name=="mu-frozen-model.zip"):
+                      (dst/name).write_bytes(z.read(name))
+          assert len(list(dst.glob("MU-*-BER-BS*.png")))==6
+          assert len(list(dst.glob("MU-*-Goodput-BS*.png")))==6
+          assert package.stat().st_size<25*1024*1024
+          shutil.copy2(package,dst/package.name)
+          print("FINAL_ARCHIVE_SHA256",hashlib.sha256(package.read_bytes()).hexdigest())
+      - name: Commit complete reproducible results
+        run: |
+          git pull --ff-only origin mu-downlink-tdlc
+          git add results/mu-tdlc
+          git commit -m "Publish MR ZF PZF payload BER goodput and frozen CNN results"
+          git push origin HEAD:mu-downlink-tdlc
