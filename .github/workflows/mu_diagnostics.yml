@@ -1,0 +1,47 @@
+name: Diagnose MU waveform limits
+on:
+  push:
+    branches: [mu-downlink-tdlc]
+    paths: [.github/workflows/mu_diagnostics.yml]
+permissions:
+  contents: write
+  actions: read
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: Seraj21/cod3-matlab
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: mu-downlink-tdlc
+      - run: gh run download 41841619172 --name mu-frozen-model --dir models
+      - uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2025b
+          products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
+      - name: Separate propagation and RF effects with perfect CSI
+        uses: matlab-actions/run-command@v3
+        with:
+          command: mu_diagnostics;
+      - name: Record diagnostic measurements
+        run: |
+          mkdir -p results/mu-diagnostics
+          python - <<'PY'
+          import pathlib,shutil
+          for p in pathlib.Path("diagnostics").glob("*/mu_metrics.csv"):
+              shutil.copy2(p,pathlib.Path("results/mu-diagnostics")/(p.parent.name+".csv"))
+          PY
+          git config user.name "Seraj"
+          git config user.email "60238838+Seraj21@users.noreply.github.com"
+          git pull --ff-only origin mu-downlink-tdlc
+          git add results/mu-diagnostics
+          git commit -m "Measure perfect-CSI static fading and RF control cases"
+          git push origin HEAD:mu-downlink-tdlc
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: mu-waveform-diagnostics
+          path: diagnostics/
