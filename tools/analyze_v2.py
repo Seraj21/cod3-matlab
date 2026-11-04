@@ -3,29 +3,38 @@
 import argparse,csv,hashlib,json,shutil,zipfile
 from pathlib import Path
 import numpy as np
+import analyze_mu as raw_audit
 from analyze_mu import read_batch,writecsv,SNRS,PRECODERS,ESTIMATORS,A,T,U,N,BATCHES,CAP,FIELDS
 from mu_plotting import figure_for_series,audit_rows
 
 def main():
+    global A,CAP
     parser=argparse.ArgumentParser()
     parser.add_argument('--artifacts',type=Path,required=True)
     parser.add_argument('--output',type=Path,required=True)
     parser.add_argument('--run-id',type=int,required=True)
     parser.add_argument('--source',required=True)
+    parser.add_argument('--rate',type=float,default=.5,choices=[.5,.25,.125])
+    parser.add_argument('--artifact-prefix',default='v2-evaluation')
+    parser.add_argument('--archive-name',default='MU-V2-Corrected-CNN-Results.zip')
     args=parser.parse_args();root=args.artifacts;out=args.output;out.mkdir(parents=True,exist_ok=True)
+    A=8*int(args.rate*23760/8);CAP=U*A/T/1e6
+    raw_audit.A=A;raw_audit.CAP=CAP
+    rate_label={.5:'1/2',.25:'1/4',.125:'1/8'}[args.rate]
     with zipfile.ZipFile(root/'v2-frozen-model.zip') as frozen:
         names=[name for name in frozen.namelist() if name.endswith('v2_model_summary.json')]
         assert len(names)==1
         model=json.loads(frozen.read(names[0]))
     fingerprints=set();allrows=[];paired=[]
-    summary={'run_id':args.run_id,'source':args.source,'model':model,'arrays':{}}
+    summary={'run_id':args.run_id,'source':args.source,'model':model,'target_code_rate':args.rate,
+             'payload_bits_per_user':A,'maximum_goodput_Mbps':CAP,'arrays':{}}
     raw=out/'raw';raw.mkdir(exist_ok=True)
     rng=np.random.default_rng(925117)
     weights=rng.multinomial(N*BATCHES,np.full(N*BATCHES,1/(N*BATCHES)),size=10000)/(N*BATCHES)
     for array in [32,64]:
         es=[];fs=[]
         for batch in range(BATCHES):
-            path=root/f'v2-evaluation-{array}-{batch}.zip'
+            path=root/f'{args.artifact_prefix}-{array}-{batch}.zip'
             e,f,digest=read_batch(path,array);es.append(e);fs.append(f);fingerprints.add(digest)
             shutil.copy2(path,raw/path.name)
         e=np.concatenate(es);f=np.concatenate(fs)
@@ -57,7 +66,8 @@ def main():
                         'Goodput_Mbps':dict(zip(ESTIMATORS,map(float,gp[s,p])))})
             for kind,values in [('BER',ber[:,p,:]),('Goodput',gp[:,p,:])]:
                 figure_for_series(SNRS,values,array,precoder,kind,bits,len(e),CAP,
-                    out/f'V2-{precoder}-{kind}-BS{array}.png',measured_label='Independent frozen-model simulation')
+                    out/f'V2-{precoder}-{kind}-BS{array}.png',
+                    measured_label=f'Independent frozen-model simulation | LDPC target rate {rate_label}')
         summary['arrays'][str(array)]={'frames':len(e),'payload_bits_per_point':bits,'points':points,
             'CNN_BER_better':int(np.count_nonzero(ber[:,:,2]<ber[:,:,1])),
             'CNN_BER_worse':int(np.count_nonzero(ber[:,:,2]>ber[:,:,1])),
@@ -71,9 +81,11 @@ def main():
     writecsv(out/'V2-plot-audit.csv',audit)
     manifest=[]
     for path in sorted(root.glob('*.zip')):
+        if path.name.startswith(('v2-evaluation-','v2-robust-')) and not path.name.startswith(args.artifact_prefix+'-'):
+            continue
         manifest.append({'file':path.name,'sha256':hashlib.sha256(path.read_bytes()).hexdigest()})
         if path.name=='v2-frozen-model.zip':shutil.copy2(path,out/path.name)
-        elif not path.name.startswith('v2-evaluation-'):
+        elif not path.name.startswith(args.artifact_prefix+'-'):
             with zipfile.ZipFile(path) as archive:
                 for member in archive.namelist():
                     if Path(member).suffix in ['.csv','.json']:
@@ -89,7 +101,7 @@ def main():
     (out/'V2-summary.json').write_text(json.dumps(summary,indent=2,ensure_ascii=False))
     text='''# نتائج النسخة المصححة V2
 
-هذه نتائج محاكاة موجية زمنية لـTDL-C و512-QAM وLDPC بمعدل حمولة1/2، مع محطة32 أو64 هوائيًا وثماني سلاسلRF وأربعة مستخدمين، لكل مستخدم أربعة هوائيات استقبال وطبقة واحدة.
+هذه نتائج محاكاة موجية زمنية لـTDL-C و512-QAM وLDPC بمعدل حمولة{RATE_LABEL}، مع محطة32 أو64 هوائيًا وثماني سلاسلRF وأربعة مستخدمين، لكل مستخدم أربعة هوائيات استقبال وطبقة واحدة.
 
 يبقى انتشار التأخير1µs والسرعة120km/h والتردد28GHz وSNR الرفع15dB. يمتد محور SNR التنزيل من0 إلى20dB، بخطوة0.5 حتى10 ثم1dB.
 
@@ -97,11 +109,11 @@ def main():
 
 صُحح مسار الاستقبال بتوحيد موضع نافذةFFT مع مرجع القناة عندCP fraction0.75، واستخدام أوزان baseband لكل حاملة، وتقدير مصفوفة التداخل والضوضاء من المراجع المعروفة. يعيد المستقبل فك الحمولات الفاشلة بحزمة SRS ويقبل المحاولة فقط عند نجاحCRC، دون الرجوع إلى بتات الحمولة الأصلية في الاختيار.
 
-تستخدم شبكة المحطة قياسات الطيار لتعلّم المزج بين خمسة متنبئات قناة مشروطة بدوبلر. لا تدخل السرعة الحقيقية في الاستدلال. توجد ثلاثة نماذج CNN للمستقبل، منفصلة حسبprecoder، مع ترتيب طبقة المستخدم أولًا وتعلّم تصحيح القناة وعدم يقينها. يبقى LMMSE مرجعًا بإحصاءات مشروطة مماثلة. دُربت النماذج على1920 قناة وتحققت على240 قناة مستقلة، ثم اختير مقدار التصحيح على16 إطارًا آخر قبل تجميد النموذج. تعرض ملفات التدريب الأعداد الفعلية ومعاملات الاختيار.
+تستخدم شبكة المحطة قياسات الطيار لتعلّم المزج بين خمسة متنبئات قناة مشروطة بدوبلر. لا تدخل السرعة الحقيقية في الاستدلال. توجد ثلاثة نماذج CNN للمستقبل، منفصلة حسبprecoder، مع ترتيب طبقة المستخدم أولًا وتعلّم تصحيح القناة وعدم يقينها. يبقى LMMSE مرجعًا بإحصاءات مشروطة مماثلة. دُربت شبكة المحطة على1920 قناة وتحققت على240 قناة مستقلة؛ استعمل كل مستقبل640 قناة تدريب و80 قناة تحقق. ثم اختير مقدار التصحيح على16 إطارًا آخر قبل تجميد النموذج. تعرض ملفات التدريب الأعداد الفعلية ومعاملات الاختيار.
 
 استعمل التدريب12RB مع رقع محلية من24حاملة، والاختبار66RB على التباعد الزمني والترددي نفسه. اختُبر مسار الاستدلال الكامل66RB قبل التحقق بالحمولة. لا يُستخدم إطار اختبار في التدريب أو اختيار المعاملات.
 
-كل منحنى يحوي128 إطار قناة مستقلًا و6082560بت حمولة لكل نقطة. يحسبBER من بتات الحمولة بعدLDPC، ويحسبGoodput من الحمولات الصحيحة المجتازةCRC مقسومًا على زمن الإطارات الكامل، شاملاً sounding والحراسة والمراجع. سقف الموارد190.08Mbit/s. لا يشمل هذا المعدلHARQ أوMAC. التعديل512-QAM وموارد sounding تجريبيان ضمن هيكل مبني علىNR.
+كل منحنى يحوي128 إطار قناة مستقلًا و{BITS_PER_POINT}بت حمولة لكل نقطة. يحسبBER من بتات الحمولة بعدLDPC، ويحسبGoodput من الحمولات الصحيحة المجتازةCRC مقسومًا على زمن الإطارات الكامل، شاملاً sounding والحراسة والمراجع. سقف الموارد{CEILING}Mbit/s. لا يشمل هذا المعدلHARQ أوMAC. التعديل512-QAM وموارد sounding تجريبيان ضمن هيكل مبني علىNR.
 
 العلامة المفتوحة عندBER صفري مرصود تُعرض عند1/Nbits لإظهارها على المحور اللوغاريتمي؛ العدد الحقيقي محفوظ فيCSV. المنحنى الثابت عندGoodput=0 يعني أن الاختبار لم يسلم حمولة صحيحة، وليس قياسات مفقودة. تتبادل الطرق مواضع العلامات على نقاطSNR الفعلية لإظهار التطابق دون تحريك البيانات.
 
@@ -110,6 +122,10 @@ def main():
 | BS | Precoder | BER LS | BER LMMSE | BER CNN | BER Perfect CSI | Goodput CNN Mbit/s |
 |---|---|---|---|---|---|---|
 '''
+    text=text.replace('{RATE_LABEL}',rate_label).replace('{BITS_PER_POINT}',str(N*BATCHES*U*A)).replace('{CEILING}',f'{CAP:g}')
+    if args.rate!=.5:
+        note='هذه نقطة تشغيل منفصلة بحمايةLDPC أقوى. بقيت القناة والتعديل والمستخدمون وموارد المراجع وشبكاتCNN المجمدة نفسها. لم تُعد اختيار معاملاتCNN على هذه النتائج؛ اختيرت المعاملات مسبقًا على تحقق مستقل بمعدل1/2. انخفاض سقف الحمولة نتيجة صريحة لزيادة الحماية.'
+        text=text.replace('## القيم عند20dB',note+'\n\n## القيم عند20dB')
     for array,info in summary['arrays'].items():
         for row in info['points']:
             if row['snr']!=20:continue
@@ -123,7 +139,7 @@ def main():
     text+='\nملف المقارنة الزوجية يعرض فروقCNN وLMMSE وفترات ثقة نقطية بإعادة أخذ العينات على إطار القناة كاملًا. تحجب الفترة عندما تختلف أقل من خمسة إطارات؛ لا تُفسر العلامات الصفرية كضمان لخطأ صفري.\n'
     text+=f'\nالمصدر المستخدم: https://github.com/Seraj21/cod3-matlab/tree/{args.source}\n\nالتشغيل: https://github.com/Seraj21/cod3-matlab/actions/runs/{args.run_id}\n'
     (out/'V2-Review.md').write_text(text,encoding='utf-8')
-    archive=out.parent/'MU-V2-Corrected-CNN-Results.zip'
+    archive=out.parent/args.archive_name
     with zipfile.ZipFile(archive,'w',zipfile.ZIP_DEFLATED) as z:
         for p in sorted(out.rglob('*')):
             if p.is_file():z.write(p,p.relative_to(out))
