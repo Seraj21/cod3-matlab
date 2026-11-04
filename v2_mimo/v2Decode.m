@@ -23,12 +23,9 @@ for u=find(users)
  R=numel(rows);
  G=permute(h(:,:,rows,:),[3 4 1 2]);
  Y=reshape(permute(input.Observed(:,:,rows),[3 1 2]),R,1,r.K,r.L);
- uncertainty=sum(channelVariance(:,:,rows,:),4);
- covariance=pagemtimes(G,'none',G,'ctranspose');
- for branch=1:R
-  n=input.Noise(rows(branch))+uncertainty(:,:,branch);
-  covariance(branch,branch,:,:)=covariance(branch,branch,:,:)+reshape(n,1,1,r.K,r.L);
- end
+ disturbance=v2NoiseCovariance(input.Observed(:,:,rows),h(:,:,rows,:), ...
+     channelVariance(:,:,rows,:),input.Noise(rows),r);
+ covariance=pagemtimes(G,'none',G,'ctranspose')+disturbance;
  desired=G(:,u,:,:);w=pagemldivide(covariance,desired);
  alpha=pagemtimes(w,'ctranspose',desired,'none');
  alphaPower=max(abs(alpha).^2,eps);
@@ -37,13 +34,9 @@ for u=find(users)
  coupling=permute(reshape(response./max(real(alpha),eps),cfg.Users,r.K,r.L),[2 3 1]);
  response(:,u,:,:)=0;
  interference=reshape(sum(abs(response).^2,2)./alphaPower,r.K,r.L);
- thermal=zeros(r.K,r.L);channelNoise=zeros(r.K,r.L,cfg.Users);
- for branch=1:R
-  gain=reshape(abs(w(branch,1,:,:)).^2./alphaPower,r.K,r.L);
-  thermal=thermal+gain*input.Noise(rows(branch));
-  channelNoise=channelNoise+gain.*reshape(channelVariance(:,:,rows(branch),:),r.K,r.L,cfg.Users);
- end
- softVariance=interference+thermal+sum(channelNoise,3);
+ postNoise=pagemtimes(w,'ctranspose',pagemtimes(disturbance,w),'none');
+ postNoise=reshape(max(real(postNoise),0)./alphaPower,r.K,r.L);
+ softVariance=interference+postNoise;
  reference=r.PTRS(:,:,u);indices=r.PTRSIndices{u};
  [~,times]=ind2sub([r.K r.L],indices);
  phasor=accumarray(times,equalized(indices).*conj(reference(indices)),[r.L 1]);
@@ -54,7 +47,7 @@ for u=find(users)
  end
  % Remove all known pilot contributions before estimating unmodelled ICI/ISI.
  expected=sum(coupling.*r.DMRS,3);
- pilotVariance=thermal+sum(channelNoise.*abs(r.DMRS).^2,3);
+ pilotVariance=postNoise;
  mask=abs(r.DMRS(:,:,u))>0;times=find(any(mask,1));extra=zeros(numel(times),1);
  for k=1:numel(times)
   l=times(k);f=find(mask(:,l));

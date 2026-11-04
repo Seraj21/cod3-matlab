@@ -66,7 +66,9 @@ for u=1:4
  estimated(rows(2:4),u)=10;
 end
 truth=repmat(reshape(trueH,1,1,16,4),r.K,12,1,1);
-h=repmat(reshape(estimated,1,1,16,4),r.K,12,1,1);
+h=repmat(reshape(trueH,1,1,16,4),r.K,12,1,1);
+wrong=repmat(reshape(estimated,1,1,16,4),r.K,12,1,1);
+dataMask=repmat(r.DataMask,1,1,16,4);h(dataMask)=wrong(dataMask);
 observed=sum(truth.*reshape(grid,r.K,12,1,4),4);
 input=struct('Observed',observed,'Noise',1e-9*ones(1,16));
 [e,f,d]=v2Decode(input,h,zeros(size(h)),payload,cfg,r);

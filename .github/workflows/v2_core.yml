@@ -1,3 +1,4 @@
+# Revision 2: include pilot-derived coloured interference covariance.
 name: V2 receiver and CNN integrity
 on:
   push:
