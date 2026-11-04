@@ -56,7 +56,7 @@ jobs:
           products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
       - uses: matlab-actions/run-command@v3
         with:
-          command: code1233_link(512,16,"results",${{ matrix.array }},[0:.5:10 11:20],5000+1000*${{ matrix.batch }},ModelFile="models/receiver_${{ matrix.array }}.mat");
+          command: code1233_link(512,16,"results",${{ matrix.array }},[0:.5:10 11:20],5000+1000*${{ matrix.batch }}+15000*(${{ matrix.batch }}==5),ModelFile="models/receiver_${{ matrix.array }}.mat");
       - uses: actions/upload-artifact@v7
         with:
           name: practical-hbf-${{ matrix.array }}-batch-${{ matrix.batch }}

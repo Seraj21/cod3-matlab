@@ -70,7 +70,8 @@ def read_result(path,size):
         assert 0<float(row["PAOutputPowerRatio"])<=1.000001
         assert int(row["SelectedBank"]) in (1,2)
     return dict(raw=payload,points=points,bits=bits,counts=counts,seed=int(d["testSeedOffset"]),
-                fingerprint=d["cnnFingerprint"],calibration=calibration)
+                fingerprint=d["cnnFingerprint"],calibration=calibration,
+                cfo=np.asarray(d["cfoResidual"]),frequency_offset=d["config"]["Settings"]["FrequencyOffset"])
 
 
 def aggregate(case,size):
@@ -112,22 +113,27 @@ def aggregate(case,size):
 
 def plot(case,size,ber,payload_bits):
     fig,ax=plt.subplots(figsize=(10,6.2),dpi=170,layout="constrained")
+    lower=.5/payload_bits.max() if np.any(ber==0) else 10.0**np.floor(np.log10(ber.min()))
+    upper=min(.6,10.0**np.ceil(np.log10(max(1e-6,ber.max()*1.1))))
     for label,y,(marker,color,line) in zip(NAMES,ber,STYLES):
         ax.semilogy(SNR,np.where(y>0,y,np.nan),marker=marker,color=color,linestyle=line,
                     linewidth=1.9,markersize=5,label=label)
         zero=y==0
         ax.scatter(SNR[zero],1/payload_bits[zero],marker=marker,edgecolors=color,facecolors="none",
                    s={"LS":55,"LMMSE":95,"CNN":40,"Perfect CSI + timing":150}[label])
-    ax.set(xlim=(0,20),ylim=(.5/payload_bits.max(),.6),xticks=np.arange(0,21,2),
+    ax.set(xlim=(-.2,20.2),xticks=np.arange(0,21,2),
            xlabel="Nominal reference SNR (dB)",ylabel="Payload BER after LDPC",
            title=f"{size}×{size} | 512-QAM | {case} | practical hybrid beamforming")
-    low=int(np.floor(np.log10(.5/payload_bits.max())))
+    low=int(np.floor(np.log10(lower)))
     ax.set_yticks(10.0**np.arange(low,0))
+    ax.set_ylim(lower,upper)
     ax.yaxis.set_major_formatter(LogFormatterMathtext())
     ax.grid(True,color="#dbe1e7")
     ax.set_axisbelow(True)
     ax.legend(loc="upper right",fontsize=10,framealpha=.97)
-    ax.text(.5,-.18,"Open markers at 1/N indicate zero observed errors.",
+    caption=("Open markers at 1/N indicate zero observed errors." if np.any(ber==0)
+             else "96 held-out ray-traced positions | 120 km/h stress test")
+    ax.text(.5,-.18,caption,
             transform=ax.transAxes,ha="center",fontsize=9)
     png=ROOT/f"Practical-HBF-BER-{case}-{size}x{size}.png"
     fig.savefig(png,facecolor="white")
@@ -136,13 +142,34 @@ def plot(case,size,ber,payload_bits):
 
 
 def main():
-    all_rows,paired,calibration=[],[],[]
+    all_rows,paired,calibration,replays=[],[],[],[]
     frozen={}
     bundle=ROOT/"Practical-HBF-512QAM-BER.zip"
     with ZipFile(bundle,"w",ZIP_DEFLATED) as z:
         for case in ("CDL-C","DeepMIMO"):
             for size in (32,64):
                 runs,errors,ber,bits,rows=aggregate(case,size)
+                if case=="DeepMIMO":
+                    with ZipFile(ROOT/f"rf-diagnostic-{size}.zip") as diagnostic:
+                        raw=diagnostic.read("rf_ablation.csv")
+                        ablation=table(raw)
+                        assert len(ablation)==12
+                        for row in ablation:
+                            assert int(row["Array"])==size
+                            assert int(row["RayIndex"]) in (1,85,94)
+                            assert int(row["Condition"]) in (1,2,3,4)
+                            if int(row["Condition"])==4:
+                                ray=int(row["RayIndex"])-1
+                                run=runs[ray//32]
+                                index=int(np.flatnonzero(run["points"]==20).item())
+                                batch_cfo=run["frequency_offset"]-run["cfo"][ray%32,index]
+                                diagnostic_cfo=float(row["EstimatedCFO"])
+                                assert abs(batch_cfo-diagnostic_cfo)<1e-3
+                                batch_errors=int(run["counts"][ray%32,index,3])
+                                diagnostic_errors=int(row["PayloadBitErrors"])
+                                replays.append([size,ray+1,diagnostic_errors,batch_errors,
+                                                batch_errors-diagnostic_errors,diagnostic_cfo,batch_cfo])
+                        z.writestr(f"Diagnostics/{size}x{size}/rf_ablation.csv",raw)
                 if size in frozen:
                     assert all(np.array_equal(x,y) for x,y in zip(frozen[size],runs[0]["fingerprint"]))
                 else:
@@ -167,8 +194,12 @@ def main():
         z.writestr("Calibration.csv",text_table(
             ["Scenario","Array","Batch","Slot","TxMeanGridPower","PAOutputPowerRatio",
              "AntennaSignalPowerPerRE","RFSignalPowerPerRE","RFNoisePowerAt0dB","SelectedBank"],calibration))
+        z.writestr("Diagnostics/replay_comparison.csv",text_table(
+            ["Array","RayIndex","DiagnosticBitErrors","BatchBitErrors","Difference",
+             "DiagnosticCFO_Hz","BatchCFO_Hz"],replays))
         z.write(ROOT/"Review-and-assumptions.md","Review-and-assumptions.md")
         z.write(ROOT/"state.json","Runs.json")
+        z.write(ROOT/"artifact_manifest.json","Artifact-manifest.json")
         for asset in ["deepmimo-source.zip","frozen-receiver-32.zip","frozen-receiver-64.zip"]:
             if (ROOT/asset).exists():
                 z.write(ROOT/asset,asset)
