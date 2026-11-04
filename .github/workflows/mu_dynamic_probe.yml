@@ -1,0 +1,42 @@
+name: Probe dynamic TDL reference consistency
+on:
+  push:
+    branches: [mu-downlink-tdlc]
+    paths: [.github/workflows/mu_dynamic_probe.yml]
+permissions:
+  contents: write
+  actions: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: Seraj21/cod3-matlab
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: mu-downlink-tdlc
+      - run: gh run download 41841619172 --name mu-frozen-model --dir models
+      - uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2025b
+          products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
+      - uses: matlab-actions/run-command@v3
+        with:
+          command: mu_dynamic_probe;
+      - name: Preserve dynamic channel consistency check
+        run: |
+          mkdir -p results/mu-diagnostics
+          cp dynamic_probe.csv results/mu-diagnostics/
+          git config user.name "Seraj"
+          git config user.email "60238838+Seraj21@users.noreply.github.com"
+          git pull --ff-only origin mu-downlink-tdlc
+          git add results/mu-diagnostics/dynamic_probe.csv
+          git commit -m "Check time-varying TDL reciprocity and waveform response consistency"
+          git push origin HEAD:mu-downlink-tdlc
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: mu-dynamic-probe
+          path: dynamic_probe.csv
