@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Verify raw MATLAB MU packet counts and draw the requested comparisons."""
-import argparse, csv, hashlib, io, json, math, shutil, zipfile
+import argparse, base64, csv, hashlib, io, json, math, shutil, zipfile
 from pathlib import Path
 import numpy as np
 from scipy.io import loadmat
@@ -216,6 +216,11 @@ def main():
     print(json.dumps(summary,ensure_ascii=False))
     print("MU_REPORT_SUMMARY_END")
     print("Archive SHA256:",hashlib.sha256(archive.read_bytes()).hexdigest())
+    for name in ["MU-MR-BER-BS64.png","MU-ZF-BER-BS64.png","MU-PZF-BER-BS64.png","MU-ZF-Goodput-BS64.png"]:
+        encoded=base64.b64encode((out/name).read_bytes()).decode("ascii")
+        print("MU_PREVIEW_BEGIN "+name)
+        for j in range(0,len(encoded),8192):print(encoded[j:j+8192])
+        print("MU_PREVIEW_END "+name)
 def review(s):
     text="""# نتائج محاكاة Multi-User TDD Downlink MIMO
 
