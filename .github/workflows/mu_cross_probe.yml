@@ -1,0 +1,30 @@
+name: Factor transmit and receive CSI errors
+on:
+  push:
+    branches: [mu-downlink-tdlc]
+    paths: [.github/workflows/mu_cross_probe.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: Seraj21/cod3-matlab
+    steps:
+      - uses: actions/checkout@v7
+      - run: gh run download 41841619172 --name mu-frozen-model --dir models
+      - uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2025b
+          products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
+      - uses: matlab-actions/run-command@v3
+        with:
+          command: mu_cross_probe;
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: mu-cross-probe
+          path: cross_probe.csv
