@@ -1,0 +1,21 @@
+name: V2 full-band inference integrity
+on:
+  push:
+    branches: [mu-cnn-v2]
+    paths: [.github/workflows/v2_inference.yml]
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2025b
+          products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
+      - uses: matlab-actions/run-tests@v3
+        with:
+          source-folder: .
+          select-by-folder: v2_mimo/tests
