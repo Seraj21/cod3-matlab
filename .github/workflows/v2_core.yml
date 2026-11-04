@@ -1,0 +1,30 @@
+name: V2 receiver and CNN integrity
+on:
+  push:
+    branches: [mu-cnn-v2]
+    paths: [.github/workflows/v2_core.yml]
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2025b
+          products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
+      - uses: matlab-actions/run-tests@v3
+        with:
+          source-folder: .
+          select-by-folder: v2_mimo/tests
+      - uses: matlab-actions/run-command@v3
+        with:
+          command: v2_control;
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: v2-corrected-control
+          path: v2_control.csv
+          if-no-files-found: warn

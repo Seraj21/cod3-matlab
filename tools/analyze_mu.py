@@ -112,40 +112,11 @@ def model_info(root):
                     info["learning_"+link]={"records":len(v),"last":v[-1],"columns":list(v[0])}
     return info
 def plot(array,p,kind,ber,gp,bits,out):
-    fig,ax=plt.subplots(figsize=(9.6,6),layout="constrained")
-    for k,name in enumerate(ESTIMATORS):
-        y=ber[:,p,k] if kind=="BER" else gp[:,p,k]
-        shown=y.copy()
-        if kind=="BER":shown[shown==0]=1/bits
-        ax.plot(SNRS,shown,label=name,color=COLORS[k],ls=STYLES[k],lw=2,
-                marker=["s","o","^","d"][k],markersize=3.7,markevery=2)
-        if kind=="BER" and np.any(y==0):
-            ax.scatter(SNRS[y==0],shown[y==0],s=42,facecolors="white",
-                       edgecolors=COLORS[k],zorder=4)
-    if kind=="BER":
-        ax.set_yscale("log")
-        positive=np.where(ber[:,p,:]>0,ber[:,p,:],1/bits)
-        ax.set_ylim(10**math.floor(math.log10(float(positive.min()))),1)
-        ax.set_ylabel("Payload BER after LDPC")
-    else:
-        peak=float(gp[:,p,:].max())
-        top=CAP*1.055 if peak>=.9*CAP else max(1,peak*1.15)
-        ax.set_ylim(0,top);ax.set_ylabel("Sum payload goodput (Mbit/s)")
-        if peak==0:
-            ax.text(.5,.47,"No correct CRC-passed payload blocks in this sample",
-                    transform=ax.transAxes,ha="center",fontsize=11,color="#555555")
-        if CAP<=top:ax.axhline(CAP,color="#777777",ls=":",lw=1)
-    ax.set_xlim(0,20);ax.set_xticks(np.arange(0,21,2))
-    ax.set_xlabel("Downlink SNR (dB), total radiated power / noise")
-    ax.set_title(f"{PRECODERS[p]} | BS {array}, 4 users, 4 Rx/user | TDL-C, 512-QAM, LDPC")
-    ax.grid(True,which="both",alpha=.23)
-    ax.legend(loc="best",framealpha=.94,fontsize=11)
-    foot=f"{bits:,} payload bits/point; {N*BATCHES} paired channel frames. "
-    foot+=("Open zero-error marks at 1/Nbits show count resolution." if kind=="BER"
-           else "Full 0.25 ms frame includes all overhead; resource ceiling 190.08 Mbit/s; no HARQ.")
-    fig.supxlabel(foot,fontsize=8,color="#444444")
-    path=out/f"MU-{PRECODERS[p]}-{kind}-BS{array}.png"
-    fig.savefig(path,dpi=175);plt.close(fig)
+    from mu_plotting import figure_for_series
+    values = ber[:,p,:] if kind=="BER" else gp[:,p,:]
+    figure_for_series(SNRS,values,array,PRECODERS[p],kind,bits,N*BATCHES,CAP,
+                      out/f"MU-{PRECODERS[p]}-{kind}-BS{array}.png")
+
 def collect_auxiliary(root):
     """Read completed controls of this exact experiment; never change a repository."""
     if not (os.getenv("GITHUB_ACTIONS")=="true" and os.getenv("GH_REPO")=="Seraj21/cod3-matlab"):
@@ -228,6 +199,10 @@ def main():
         "Goodput cannot exceed resource-count ceiling","No fitted, sorted, clipped or forced-monotonic BER curves"]
     writecsv(out/"MU-paired-CNN-LMMSE.csv",paired)
     writecsv(out/"MU-all-metrics.csv",allrows,FIELDS)
+    from mu_plotting import audit_rows
+    plot_audit=audit_rows(allrows,SNRS)
+    writecsv(out/"MU-plot-audit.csv",plot_audit)
+    summary["plot_audit"]=plot_audit
     if (root/"diagnostics/rate_probe.csv").exists():summary["rate_control"]=rows((root/"diagnostics/rate_probe.csv").read_bytes())
     (out/"summary.json").write_text(json.dumps(summary,ensure_ascii=False,indent=2),encoding="utf-8")
     for name in ["mu-training-report.zip","mu-frozen-model.zip","artifact_manifest.json","training_summary.json"]:
