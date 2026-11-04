@@ -1,0 +1,24 @@
+name: Prepare held-out DeepMIMO rays
+on:
+  push:
+    branches: [practical-hbf-receiver]
+    paths:
+      - scripts/export_deepmimo.py
+      - .github/workflows/prepare_deepmimo.yml
+permissions:
+  contents: read
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - run: pip install deepmimo==4.0.5 scipy
+      - run: OPENBLAS_NUM_THREADS=1 python scripts/export_deepmimo.py
+      - uses: actions/upload-artifact@v7
+        with:
+          name: deepmimo-held-out-rays
+          path: external/
