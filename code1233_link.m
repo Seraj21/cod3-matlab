@@ -5,7 +5,7 @@ arguments
     numSlots (1,1) double {mustBeInteger,mustBePositive} = 32
     outputFolder (1,1) string = "results"
     arraySize (1,1) double {mustBeMember(arraySize,[32 64])} = 32
-    snrDb (1,:) double {mustBeFinite} = [0:5, 10:5:40]
+    snrDb (1,:) double {mustBeFinite} = [0:0.5:10, 11:20]
     testSeedOffset (1,1) double {mustBeInteger,mustBeNonnegative} = 0
 end
 assert(~isempty(snrDb) && all(diff(snrDb)>0),"SNR points must be increasing.");
@@ -185,6 +185,8 @@ for slot = 1:numTrainingSlots+numSlots
         if slot == numTrainingSlots
             lmmse = trainLMMSE(trainingTruth,stencil,groups,pilotIndices);
             cnn = trainCNN(trainingSamples,trainingTruth,lmmse,stencil,groups,pilot,c);
+            cnnFingerprint = cellfun(@(w) gather(extractdata(w)),cnn.Learnables.Value, ...
+                'UniformOutput',false);
             clear trainingSamples trainingTruth
             fprintf('Training completed; starting independent evaluation.\n');
         end
@@ -264,7 +266,7 @@ calibration = table((1:numSlots).',txPowerPerDataRE,antennaSignalPowerPerDataRE,
     rfSignalPowerPerDataRE,rfNoisePowerAt0dB,'VariableNames', ...
     {'Slot','TxPowerPerDataRE','AntennaSignalPowerPerDataRE','RFSignalPowerPerDataRE','RFNoisePowerAt0dB'});
 writetable(calibration,fullfile(outputFolder,'snr_calibration.csv'));
-save(fullfile(outputFolder,'post_ldpc_ber.mat'),'M','numSlots','testSeedOffset','numTrainingSlots','arraySize','numRF','prgWidth', ...
+save(fullfile(outputFolder,'post_ldpc_ber.mat'),'M','numSlots','cnnFingerprint','testSeedOffset','numTrainingSlots','arraySize','numRF','prgWidth', ...
     'configName','estimatorNames','snrDb','postBer','postBitErrors','totalPayloadBits', ...
     'payloadBitsPerSlot','slotErrors','calibration','maxDoppler','delaySpread','speedKmh','carrierFrequency','targetRate','pilot', ...
     'phaseBits','soundingSNR','feedbackDelay','horizontalCorrelation','verticalCorrelation','timingMAE');

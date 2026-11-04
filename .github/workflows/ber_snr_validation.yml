@@ -1,4 +1,4 @@
-name: Validate 512-QAM BER and SNR
+name: Dense 0-20 dB post-LDPC BER
 on:
   workflow_dispatch:
   push:
@@ -11,11 +11,12 @@ permissions:
   contents: read
 jobs:
   simulate:
-    name: Validate ${{ matrix.array }}x${{ matrix.array }} 512-QAM
+    name: Dense ${{ matrix.array }}x${{ matrix.array }} batch ${{ matrix.batch }}
     strategy:
       fail-fast: false
       matrix:
         array: [32, 64]
+        batch: [0, 1, 2]
     runs-on: ubuntu-latest
     timeout-minutes: 95
     steps:
@@ -29,9 +30,9 @@ jobs:
           select-by-folder: tests
       - uses: matlab-actions/run-command@v3
         with:
-          command: checkcode('code1233_link.m','-id'); code1233_link(512,96,"results",${{ matrix.array }},4:10,200);
+          command: checkcode('code1233_link.m','-id'); code1233_link(512,32,"results",${{ matrix.array }},[0:0.5:10,11:20],200+1000*${{ matrix.batch }});
       - uses: actions/upload-artifact@v7
         with:
-          name: validated-ber-${{ matrix.array }}x${{ matrix.array }}
+          name: dense-ber-${{ matrix.array }}x${{ matrix.array }}-batch-${{ matrix.batch }}
           path: results/
           if-no-files-found: error
