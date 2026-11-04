@@ -1,3 +1,4 @@
+# Report revision 2: include completed independent LDPC and CSI controls.
 name: Final verified MU figures and frozen model
 on:
   push:
