@@ -1,0 +1,60 @@
+name: Held-out DeepMIMO receiver BER
+on:
+  workflow_dispatch:
+  push:
+    branches: [practical-hbf-receiver]
+    paths: [.github/workflows/deepmimo_receiver_ber.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 95
+    strategy:
+      fail-fast: false
+      matrix:
+        array: [32, 64]
+        batch: [0, 1, 2]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/github-script@v8
+        with:
+          script: |
+            const name = "frozen-receiver-${{ matrix.array }}";
+            for (let attempt = 0; attempt < 150; attempt++) {
+              const {data} = await github.rest.actions.listWorkflowRunArtifacts({
+                ...context.repo, run_id: 41817018020
+              });
+              if (data.artifacts.some(a => a.name === name)) return;
+              const {data: run} = await github.rest.actions.getWorkflowRun({
+                ...context.repo, run_id: 41817018020
+              });
+              if (run.status === "completed") throw new Error("Frozen model is unavailable");
+              await new Promise(resolve => setTimeout(resolve, 20000));
+            }
+            throw new Error("Frozen model wait timed out");
+      - uses: actions/download-artifact@v7
+        with:
+          github-token: ${{ github.token }}
+          run-id: 41817018020
+          name: frozen-receiver-${{ matrix.array }}
+          path: models
+      - uses: actions/download-artifact@v7
+        with:
+          github-token: ${{ github.token }}
+          run-id: 41817163511
+          name: deepmimo-held-out-rays
+          path: external
+      - uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2025b
+          products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
+      - uses: matlab-actions/run-command@v3
+        with:
+          command: code1233_link(512,32,"results",${{ matrix.array }},[0:.5:10 11:20],85000+1000*${{ matrix.batch }},ModelFile="models/receiver_${{ matrix.array }}.mat",TestProfile="DeepMIMO",RayFile="external/deepmimo_i2_28b.mat",RayStart=1+32*${{ matrix.batch }});
+      - uses: actions/upload-artifact@v7
+        with:
+          name: deepmimo-ber-${{ matrix.array }}-batch-${{ matrix.batch }}
+          path: results/
+          if-no-files-found: error
