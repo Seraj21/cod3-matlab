@@ -1,11 +1,14 @@
-function code1233_link(M, numSlots, outputFolder, arraySize)
+function code1233_link(M, numSlots, outputFolder, arraySize, snrDb, testSeedOffset)
 % Compare practical channel estimators and a perfect-reference receiver.
 arguments
     M (1,1) double {mustBeMember(M,[256 512])} = 256
     numSlots (1,1) double {mustBeInteger,mustBePositive} = 32
     outputFolder (1,1) string = "results"
     arraySize (1,1) double {mustBeMember(arraySize,[32 64])} = 32
+    snrDb (1,:) double {mustBeFinite} = [0:5, 10:5:40]
+    testSeedOffset (1,1) double {mustBeInteger,mustBeNonnegative} = 0
 end
+assert(~isempty(snrDb) && all(diff(snrDb)>0),"SNR points must be increasing.");
 if ~isfolder(outputFolder)
     mkdir(outputFolder);
 end
@@ -20,7 +23,6 @@ speedKmh = 120;
 maxDoppler = (speedKmh / 3.6) * carrierFrequency / 299792458;
 delaySpread = 1000e-9;
 targetRate = 0.5;
-snrDb = [0:5, 10:5:40];
 trainingSNR = [0 5 15 30 40];
 numTrainingSlots = 16;
 bitsPerSymbol = log2(M);
@@ -70,7 +72,11 @@ assert(~testCRCFailed && all(testDecoded(:)==testPayload(:)),'Coded loopback fai
 fprintf('Verified noiseless CRC, LDPC, interleaver and %d-QAM loopback.\n',M);
 
 estimatorNames = {'LS','LMMSE','CNN','Perfect CSI + timing'};
-postBitErrors = zeros(numel(estimatorNames),numel(snrDb));
+slotErrors = zeros(numSlots,numel(snrDb),numel(estimatorNames));
+txPowerPerDataRE = zeros(numSlots,1);
+antennaSignalPowerPerDataRE = zeros(numSlots,1);
+rfSignalPowerPerDataRE = zeros(numSlots,1);
+rfNoisePowerAt0dB = zeros(numSlots,1);
 c = 6+(arraySize==64);
 Nt = arraySize;
 Nr = arraySize;
@@ -91,10 +97,10 @@ configName = sprintf('%dx%d HBF',Nt,Nr);
 fprintf('%d-QAM | %s | %d training slots and %d test slots\n',M,configName,numTrainingSlots,numSlots);
 trainingPayload = RandStream('mt19937ar','Seed',60000+c);
 trainingNoise = RandStream('mt19937ar','Seed',50000+c);
-testPayloadStream = RandStream('mt19937ar','Seed',10000+c);
-testNoise = RandStream('mt19937ar','Seed',20000+c);
+testPayloadStream = RandStream('mt19937ar','Seed',10000+c+testSeedOffset);
+testNoise = RandStream('mt19937ar','Seed',20000+c+testSeedOffset);
 trainingSounding = RandStream('mt19937ar','Seed',80000+c);
-testSounding = RandStream('mt19937ar','Seed',90000+c);
+testSounding = RandStream('mt19937ar','Seed',90000+c+testSeedOffset);
 trainingTruth = cell(numTrainingSlots,1);
 trainingSamples = cell(numTrainingSlots,numel(trainingSNR));
 
@@ -116,7 +122,7 @@ for slot = 1:numTrainingSlots+numSlots
         noiseStream = trainingNoise;
         soundingStream = trainingSounding;
     else
-        seed = 30000 + 1000*c + slot-numTrainingSlots;
+        seed = 30000 + 1000*c + testSeedOffset + slot-numTrainingSlots;
         payloadStream = testPayloadStream;
         noiseStream = testNoise;
         soundingStream = testSounding;
@@ -146,6 +152,13 @@ for slot = 1:numTrainingSlots+numSlots
     tx = nrOFDMModulate(carrier,antennaGrid,'Windowing',0);
     assert(size(tx,1)==slotSamples);
     [rx,response,timingOffset] = channel([tx*conj(txFactor); zeros(tailSamples,Nt,'like',tx)],carrier);
+    if ~training
+        trial = slot-numTrainingSlots;
+        % The RF projection is orthonormal, so white noise has the same
+        % variance before projection and on each retained RF output.
+        assert(norm(double(receiver'*receiver)-eye(size(receiver,2)),'fro') < 1e-5);
+        antennaWaveform = rx*rxFactor.';
+    end
     rx = double(rx*(rxFactor.'*conj(receiver)));
     H = correlateResponse(permute(response(:,1:L,:,:),[3 4 1 2]),rxFactor,txFactor);
     clear response
@@ -178,6 +191,15 @@ for slot = 1:numTrainingSlots+numSlots
         continue
     end
 
+    txPowerPerDataRE(trial) = mean(sum(abs(antennaGrid(double(dataIndices) + (0:Nt-1)*K*L)).^2,2));
+    antennaGridRx = nrOFDMDemodulate(carrier,antennaWaveform(oracleSamples,:));
+    rfGrid = nrOFDMDemodulate(carrier,rx(oracleSamples,:));
+    noiseGrid = nrOFDMDemodulate(carrier,baseNoise(oracleSamples,:));
+    antennaSignalPowerPerDataRE(trial) = mean(abs(antennaGridRx(double(dataIndices) + (0:Nr-1)*K*L)).^2,'all');
+    rfIndices = double(dataIndices) + (0:size(rx,2)-1)*K*L;
+    rfSignalPowerPerDataRE(trial) = mean(abs(rfGrid(rfIndices)).^2,'all');
+    rfNoisePowerAt0dB(trial) = mean(abs(noiseGrid(rfIndices)).^2,'all');
+    assert(abs(10*log10(rfNoisePowerAt0dB(trial))) < 0.15,'Noise calibration failed.');
     for s = 1:numel(snrDb)
         noiseVariance = 10^(-snrDb(s)/10);
         noisyWaveform = rx+sqrt(noiseVariance)*baseNoise;
@@ -215,7 +237,7 @@ for slot = 1:numTrainingSlots+numSlots
             deinterleaved(bitOrder) = reshape(reshape(soft,bitsPerSymbol,[]).*weights,[],1);
             reset(decoder);
             decoded = decoder(max(-50,min(50,deinterleaved)),rateMatchMod,1,0);
-            postBitErrors(est,s) = postBitErrors(est,s)+nnz(decoded(:) ~= payload(:));
+            slotErrors(trial,s,est) = nnz(decoded(:) ~= payload(:));
         end
     end
     if mod(slot-numTrainingSlots,16) == 0 || slot == numTrainingSlots+numSlots
@@ -223,6 +245,7 @@ for slot = 1:numTrainingSlots+numSlots
     end
 end
 
+postBitErrors = reshape(sum(slotErrors,1),numel(snrDb),numel(estimatorNames)).';
 totalPayloadBits = repmat(payloadBitsPerSlot*numSlots,size(postBitErrors));
 postBer = postBitErrors./totalPayloadBits;
 timingMAE = timingAbsError/numSlots;
@@ -230,9 +253,20 @@ metrics = table(repelem(estimatorNames(:),numel(snrDb)),repmat(snrDb(:),numel(es
     reshape(postBer.',[],1),reshape(postBitErrors.',[],1),reshape(totalPayloadBits.',[],1), ...
     'VariableNames',{'Estimator','SNR_dB','PostLDPC_BER','PostLDPC_BitErrors','TotalPayloadBits'});
 writetable(metrics,fullfile(outputFolder,'post_ldpc_ber.csv'));
-save(fullfile(outputFolder,'post_ldpc_ber.mat'),'M','numSlots','numTrainingSlots','arraySize','numRF','prgWidth', ...
+[slotIndex,snrIndex,estimatorIndex] = ndgrid(1:numSlots,1:numel(snrDb),1:numel(estimatorNames));
+estimatorColumn = estimatorNames(:);
+snrColumn = snrDb(:);
+slotMetrics = table(slotIndex(:),snrColumn(snrIndex(:)),estimatorColumn(estimatorIndex(:)), ...
+    slotErrors(:),repmat(payloadBitsPerSlot,numel(slotErrors),1), ...
+    'VariableNames',{'Slot','SNR_dB','Estimator','PostLDPC_BitErrors','PayloadBits'});
+writetable(slotMetrics,fullfile(outputFolder,'slot_errors.csv'));
+calibration = table((1:numSlots).',txPowerPerDataRE,antennaSignalPowerPerDataRE, ...
+    rfSignalPowerPerDataRE,rfNoisePowerAt0dB,'VariableNames', ...
+    {'Slot','TxPowerPerDataRE','AntennaSignalPowerPerDataRE','RFSignalPowerPerDataRE','RFNoisePowerAt0dB'});
+writetable(calibration,fullfile(outputFolder,'snr_calibration.csv'));
+save(fullfile(outputFolder,'post_ldpc_ber.mat'),'M','numSlots','testSeedOffset','numTrainingSlots','arraySize','numRF','prgWidth', ...
     'configName','estimatorNames','snrDb','postBer','postBitErrors','totalPayloadBits', ...
-    'payloadBitsPerSlot','maxDoppler','delaySpread','speedKmh','carrierFrequency','targetRate','pilot', ...
+    'payloadBitsPerSlot','slotErrors','calibration','maxDoppler','delaySpread','speedKmh','carrierFrequency','targetRate','pilot', ...
     'phaseBits','soundingSNR','feedbackDelay','horizontalCorrelation','verticalCorrelation','timingMAE');
 end
 
