@@ -18,11 +18,15 @@ positions = np.asarray(dataset.rx_pos)
 power = np.asarray(dataset.power_linear)
 active = np.flatnonzero(np.nansum(power, axis=1)>0)
 # Spatially separated positions are reserved exclusively for held-out evaluation.
-voxels = np.floor(positions[active]/2).astype(int)
-_, first = np.unique(voxels, axis=0, return_index=True)
-candidates = active[first]
 rng = np.random.default_rng(5501)
-selected = rng.permutation(candidates)[:96]
+selected = []
+for candidate in rng.permutation(active):
+    if not selected or np.all(np.linalg.norm(positions[selected]-positions[candidate], axis=1)>=.25):
+        selected.append(int(candidate))
+    if len(selected)==96:
+        break
+selected = np.asarray(selected)
+print("Selected held-out positions", len(selected), "active", len(active))
 assert len(selected)>=32, "Insufficient spatially separated held-out positions"
 dataset = dataset.trim(idxs=selected)
 paths = min(10, int(dataset.max_paths))
@@ -61,7 +65,7 @@ output = Path("external")
 output.mkdir(exist_ok=True)
 savemat(output/"deepmimo_i2_28b.mat", result, do_compression=True)
 metadata = dict(scenario=scenario, frequency=frequency, positions=len(selected), paths=paths,
-                package_version="4.0.5", position_voxel_metres=2,
+                package_version="4.0.5", minimum_position_separation_metres=.25,
                 channel_normalization="unit mean power per antenna pair",
                 motion="locally frozen geometry with angle-based Doppler at test speed")
 (output/"source.json").write_text(json.dumps(metadata, indent=2))
