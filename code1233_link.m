@@ -1,5 +1,5 @@
 function code1233_link(M, numSlots, outputFolder, arraySize)
-% Post-LDPC BER for a high-mobility, long-delay TDL-C channel with perfect CSI.
+% Compare practical channel estimators and a perfect-reference receiver.
 arguments
     M (1,1) double {mustBeMember(M,[256 512])} = 256
     numSlots (1,1) double {mustBeInteger,mustBePositive} = 32
@@ -69,18 +69,32 @@ testLLR(bitOrder) = 12*(1-2*double(testHard(:)));
 assert(~testCRCFailed && all(testDecoded(:)==testPayload(:)),'Coded loopback failed.');
 fprintf('Verified noiseless CRC, LDPC, interleaver and %d-QAM loopback.\n',M);
 
-estimatorNames = {'LS','LMMSE','CNN','Perfect CSI'};
+estimatorNames = {'LS','LMMSE','CNN','Perfect CSI + timing'};
 postBitErrors = zeros(numel(estimatorNames),numel(snrDb));
 c = 6+(arraySize==64);
 Nt = arraySize;
 Nr = arraySize;
 numRF = 8;
+phaseBits = 4;
+soundingSNR = 15;
+feedbackDelay = slotSamples/ofdm.SampleRate;
+timingSearchSamples = ceil(12e-6*ofdm.SampleRate);
+horizontalCorrelation = .45;
+verticalCorrelation = .35;
+arrayRows = arraySize/8;
+rxFactor = arrayFactor(arrayRows,8,horizontalCorrelation,verticalCorrelation);
+txFactor = rxFactor;
+kSigned = (-K/2:K/2-1).';
+phaseStep = 2*pi*kSigned/double(ofdm.Nfft);
+timingAbsError = zeros(1,numel(snrDb));
 configName = sprintf('%dx%d HBF',Nt,Nr);
 fprintf('%d-QAM | %s | %d training slots and %d test slots\n',M,configName,numTrainingSlots,numSlots);
 trainingPayload = RandStream('mt19937ar','Seed',60000+c);
 trainingNoise = RandStream('mt19937ar','Seed',50000+c);
 testPayloadStream = RandStream('mt19937ar','Seed',10000+c);
 testNoise = RandStream('mt19937ar','Seed',20000+c);
+trainingSounding = RandStream('mt19937ar','Seed',80000+c);
+testSounding = RandStream('mt19937ar','Seed',90000+c);
 trainingTruth = cell(numTrainingSlots,1);
 trainingSamples = cell(numTrainingSlots,numel(trainingSNR));
 
@@ -89,8 +103,10 @@ probe.ChannelFiltering = false;
 probe.OutputDataType = 'single';
 probe.ChannelResponseOutput = 'ofdm-response';
 channel = makeChannel(Nt,Nr,ofdm.SampleRate,delaySpread,maxDoppler);
+channel.InitialTime = feedbackDelay;
+channel.ChannelResponseOutput = 'ofdm-response';
 channelInfo = info(channel);
-tailSamples = channelInfo.MaximumChannelDelay;
+tailSamples = max(channelInfo.MaximumChannelDelay,timingSearchSamples);
 probe.NumTimeSamples = slotSamples + tailSamples;
 for slot = 1:numTrainingSlots+numSlots
     training = slot <= numTrainingSlots;
@@ -98,28 +114,27 @@ for slot = 1:numTrainingSlots+numSlots
         seed = 40000 + 1000*c + slot;
         payloadStream = trainingPayload;
         noiseStream = trainingNoise;
+        soundingStream = trainingSounding;
     else
         seed = 30000 + 1000*c + slot-numTrainingSlots;
         payloadStream = testPayloadStream;
         noiseStream = testNoise;
+        soundingStream = testSounding;
     end
     release(probe);
     release(channel);
     probe.Seed = seed;
     channel.Seed = seed;
-    [response,timingOffset] = probe(carrier);
-    assert(size(response,1) == K && size(response,2) >= L && ...
-        size(response,3) == Nr && size(response,4) == Nt);
-    H = permute(response(:,1:L,:,:),[3 4 1 2]);
-    [precoder,receiver] = beamformers(H(:,:,:,1),numRF,numRF,prgWidth);
-    if slot == 1
-        [perTone,~] = beamformers(H(:,:,:,1),numRF,numRF,1);
-        oldEffective = effectiveFirstSymbol(H(:,:,:,1),receiver,perTone);
-        newEffective = effectiveFirstSymbol(H(:,:,:,1),receiver,precoder);
-        fprintf('Adjacent-tone variation on a training slot: per-tone %.4f, PRG %.4f.\n', ...
-            toneVariation(oldEffective),toneVariation(newEffective));
-        clear perTone oldEffective newEffective
-    end
+    response = probe(carrier);
+    assert(size(response,1)==K && size(response,3)==Nr && size(response,4)==Nt);
+    Hsounding = correlateResponse(reshape(permute(response(:,1,:,:),[3 4 1 2]),Nr,Nt,K), ...
+        rxFactor,txFactor);
+    clear response
+    soundingError = complex(randn(soundingStream,size(Hsounding),'single'), ...
+        randn(soundingStream,size(Hsounding),'single'))/sqrt(2*10^(soundingSNR/10));
+    [precoder,receiver] = beamformers(Hsounding+soundingError,numRF,numRF,prgWidth,phaseBits);
+    clear Hsounding soundingError
+    assert(max(abs(sum(abs(precoder).^2,1)-1)) < 2e-5);
 
     payload = int8(randi(payloadStream,[0 1],payloadBitsPerSlot,1));
     setTransportBlock(encoder,payload);
@@ -130,24 +145,29 @@ for slot = 1:numTrainingSlots+numSlots
     antennaGrid = reshape(single(layerGrid),K,L,1).*reshape(precoder.',K,1,Nt);
     tx = nrOFDMModulate(carrier,antennaGrid,'Windowing',0);
     assert(size(tx,1)==slotSamples);
-    rx = channel([tx; zeros(tailSamples,Nt,'like',tx)]);
-    rx = rx(timingOffset+(1:slotSamples),:)*conj(receiver);
+    [rx,response,timingOffset] = channel([tx*conj(txFactor); zeros(tailSamples,Nt,'like',tx)],carrier);
+    rx = double(rx*(rxFactor.'*conj(receiver)));
+    H = correlateResponse(permute(response(:,1:L,:,:),[3 4 1 2]),rxFactor,txFactor);
+    clear response
     projected = pagemtimes(receiver','none',H,'none');
     Hsingle = pagemtimes(projected,reshape(precoder,Nt,1,K,1));
     Hgrid = double(reshape(permute(Hsingle,[3 4 1 2]),K,L,[]));
-    clear response H projected Hsingle
+    clear H projected Hsingle
 
     baseNoise = (randn(noiseStream,size(rx)) + 1i*randn(noiseStream,size(rx))) ...
         /sqrt(2*double(ofdm.Nfft));
-    signalGrid = double(nrOFDMDemodulate(carrier,rx));
-    noiseGrid = nrOFDMDemodulate(carrier,baseNoise);
+    oracleSamples = timingOffset+(1:slotSamples);
     if training
-        trainingTruth{slot} = single(Hgrid);
+        cleanOffset = estimateTiming(carrier,rx,pilotIndices,pilotSymbols,timingSearchSamples);
+        trainingTruth{slot} = single(Hgrid.*exp(1i*phaseStep*(cleanOffset-timingOffset)));
         for s = 1:numel(trainingSNR)
             noiseVariance = 10^(-trainingSNR(s)/10);
-            receivedGrid = signalGrid + sqrt(noiseVariance)*noiseGrid;
+            noisyWaveform = rx+sqrt(noiseVariance)*baseNoise;
+            offset = estimateTiming(carrier,noisyWaveform,pilotIndices,pilotSymbols,timingSearchSamples);
+            receivedGrid = nrOFDMDemodulate(carrier,noisyWaveform(offset+(1:slotSamples),:));
             [ls,pilotGrid,nVar,scale] = practicalInputs(receivedGrid,pilotIndices,pilotSymbols,noiseVariance,pilot);
-            trainingSamples{slot,s} = {single(ls),single(pilotGrid),nVar,scale};
+            timingPhase = single(exp(1i*phaseStep*(offset-cleanOffset)));
+            trainingSamples{slot,s} = {single(ls),single(pilotGrid),nVar,scale,timingPhase};
         end
         if slot == numTrainingSlots
             lmmse = trainLMMSE(trainingTruth,stencil,groups,pilotIndices);
@@ -160,25 +180,36 @@ for slot = 1:numTrainingSlots+numSlots
 
     for s = 1:numel(snrDb)
         noiseVariance = 10^(-snrDb(s)/10);
-        receivedGrid = signalGrid + sqrt(noiseVariance)*noiseGrid;
+        noisyWaveform = rx+sqrt(noiseVariance)*baseNoise;
+        offset = estimateTiming(carrier,noisyWaveform,pilotIndices,pilotSymbols,timingSearchSamples);
+        timingAbsError(s) = timingAbsError(s)+abs(double(offset)-double(timingOffset));
+        receivedGrid = nrOFDMDemodulate(carrier,noisyWaveform(offset+(1:slotSamples),:));
+        oracleGrid = nrOFDMDemodulate(carrier,noisyWaveform(oracleSamples,:));
+        [~,~,oracleNoise] = practicalInputs(oracleGrid,pilotIndices,pilotSymbols,noiseVariance,pilot);
         [ls,pilotGrid,nVar,scale] = practicalInputs(receivedGrid,pilotIndices,pilotSymbols,noiseVariance,pilot);
         wiener = estimateLMMSE(pilotGrid,nVar,scale,lmmse,stencil,groups);
-        cnnEstimate = estimateCNN(cnn,ls,wiener,scale,nVar,pilot);
+        cnnEstimate = estimateCNN(cnn,ls,wiener,pilotGrid,scale,nVar,pilot);
         estimates = {ls,wiener,cnnEstimate,Hgrid};
         for est = 1:numel(estimatorNames)
             % The same equalizer, soft demapper and LDPC decoder are used.
             h = estimates{est};
+            observed = receivedGrid;
+            variance = nVar;
+            if est == numel(estimatorNames)
+                observed = oracleGrid;
+                variance = oracleNoise;
+            end
             gain = max(sum(abs(h).^2,3),eps);
-            equalized = sum(conj(h).*receivedGrid,3)./gain;
+            equalized = sum(conj(h).*observed,3)./gain;
             soft = qamdemod(equalized(dataIndices),M,'OutputType','approxllr', ...
                 'UnitAveragePower',true,'NoiseVariance',1);
             pilotError = abs(equalized(pilotIndices)-pilotSymbols).^2;
             pilotGain = gain(pilotIndices);
             groupGain = max(pilot.timeGroups.'*pilotGain,eps);
             residualAtPilot = max(0,(pilot.timeGroups.'*(pilotGain.*pilotError) ...
-                - nVar*pilot.timeCounts)./groupGain);
+                - variance*pilot.timeCounts)./groupGain);
             residual = pilot.timeInterp*residualAtPilot;
-            dataVariance = nVar./gain(dataIndices) + residual(pilot.dataTimes);
+            dataVariance = variance./gain(dataIndices) + residual(pilot.dataTimes);
             weights = 1./reshape(dataVariance,1,[]);
             deinterleaved = zeros(codedBitsPerSlot,1);
             deinterleaved(bitOrder) = reshape(reshape(soft,bitsPerSymbol,[]).*weights,[],1);
@@ -194,13 +225,15 @@ end
 
 totalPayloadBits = repmat(payloadBitsPerSlot*numSlots,size(postBitErrors));
 postBer = postBitErrors./totalPayloadBits;
+timingMAE = timingAbsError/numSlots;
 metrics = table(repelem(estimatorNames(:),numel(snrDb)),repmat(snrDb(:),numel(estimatorNames),1), ...
     reshape(postBer.',[],1),reshape(postBitErrors.',[],1),reshape(totalPayloadBits.',[],1), ...
     'VariableNames',{'Estimator','SNR_dB','PostLDPC_BER','PostLDPC_BitErrors','TotalPayloadBits'});
 writetable(metrics,fullfile(outputFolder,'post_ldpc_ber.csv'));
 save(fullfile(outputFolder,'post_ldpc_ber.mat'),'M','numSlots','numTrainingSlots','arraySize','numRF','prgWidth', ...
     'configName','estimatorNames','snrDb','postBer','postBitErrors','totalPayloadBits', ...
-    'payloadBitsPerSlot','maxDoppler','delaySpread','speedKmh','carrierFrequency','targetRate','pilot');
+    'payloadBitsPerSlot','maxDoppler','delaySpread','speedKmh','carrierFrequency','targetRate','pilot', ...
+    'phaseBits','soundingSNR','feedbackDelay','horizontalCorrelation','verticalCorrelation','timingMAE');
 end
 
 function p = pilotLayout(mask,W)
@@ -308,14 +341,15 @@ for branch = 1:R
 end
 end
 
-function x = makeFeatures(ls,wiener,scale,nVar,p)
+function x = makeFeatures(ls,wiener,pilots,scale,nVar,p)
 R = size(ls,3);
 divisor = reshape(scale,1,1,R);
 ls = asPRGPatches(ls./divisor,p);
 wiener = asPRGPatches(wiener./divisor,p);
+sparse = asPRGPatches(reshape(pilots,p.K,p.L,R)./divisor,p);
 relativeNoise = repelem(log10(max(1e-5,nVar./scale.^2)),p.G);
 timeCoordinate = repmat(linspace(-1,1,p.L),p.W,1,1,p.G*R);
-x = single(cat(3,real(ls),imag(ls),real(wiener),imag(wiener), ...
+x = single(cat(3,real(ls),imag(ls),real(wiener),imag(wiener),real(sparse),imag(sparse), ...
     repmat(p.mask,1,1,1,p.G*R), ...
     repmat(reshape(relativeNoise,1,1,1,[]),p.W,p.L,1,1),timeCoordinate));
 end
@@ -340,8 +374,8 @@ for slot = 1:size(samples,1)
         nVar = item{3};
         scale = item{4};
         wiener = estimateLMMSE(pilots,nVar,scale,lmmse,stencil,groups);
-        features = makeFeatures(ls,wiener,scale,nVar,p);
-        target = (double(truth{slot})-wiener)./reshape(scale,1,1,[]);
+        features = makeFeatures(ls,wiener,pilots,scale,nVar,p);
+        target = (double(truth{slot}).*double(item{5})-wiener)./reshape(scale,1,1,[]);
         target = asPRGPatches(target,p);
         X{slot,s} = features(:,:,:,selected);
         Y{slot,s} = single(cat(3,real(target(:,:,:,selected)),imag(target(:,:,:,selected))));
@@ -349,7 +383,7 @@ for slot = 1:size(samples,1)
 end
 rng(70000+c,'twister');
 layers = [
-    imageInputLayer([p.W p.L 7],'Normalization','none')
+    imageInputLayer([p.W p.L 9],'Normalization','none')
     convolution2dLayer([5 3],16,'Padding','same')
     reluLayer
     convolution2dLayer([5 3],16,'Padding','same','DilationFactor',[1 2])
@@ -361,22 +395,30 @@ opts = trainingOptions('adam','MaxEpochs',10,'MiniBatchSize',48,'InitialLearnRat
 net = trainnet(cat(4,X{:}),cat(4,Y{:}),layers,'mse',opts);
 end
 
-function h = estimateCNN(net,ls,wiener,scale,nVar,p)
+function h = estimateCNN(net,ls,wiener,pilots,scale,nVar,p)
 R = size(ls,3);
-x = makeFeatures(ls,wiener,scale,nVar,p);
+x = makeFeatures(ls,wiener,pilots,scale,nVar,p);
 z = double(extractdata(predict(net,dlarray(x,'SSCB'))));
 correction = reshape(complex(z(:,:,1,:),z(:,:,2,:)),p.W,p.L,p.G,R);
 correction = reshape(permute(correction,[1 3 2 4]),p.K,p.L,R);
 h = wiener+correction.*reshape(scale,1,1,R);
 end
 
-function h = effectiveFirstSymbol(H,receiver,precoder)
-weighted = pagemtimes(H,reshape(precoder,size(H,2),1,[]));
-h = reshape(pagemtimes(receiver',weighted),size(receiver,2),[]).';
+function offset = estimateTiming(carrier,waveform,indices,symbols,window)
+[~,mag] = nrTimingEstimate(carrier,waveform,indices,symbols);
+energy = sum(abs(mag(1:min(window+1,size(mag,1)),:)).^2,2);
+[~,peak] = max(energy);
+offset = peak-1;
 end
 
-function y = toneVariation(h)
-y = sum(abs(diff(h,1,1)).^2,'all')/max(sum(abs(h).^2,'all'),eps);
+function factor = arrayFactor(rows,columns,rhoX,rhoY)
+vertical = toeplitz(rhoY.^(0:rows-1));
+horizontal = toeplitz(rhoX.^(0:columns-1));
+factor = single(chol(kron(horizontal,vertical),'lower'));
+end
+
+function h = correlateResponse(h,rxFactor,txFactor)
+h = pagemtimes(rxFactor,pagemtimes(h,txFactor'));
 end
 
 function channel = makeChannel(Nt,Nr,Fs,delaySpread,maxDoppler)
@@ -387,7 +429,7 @@ channel = nrTDLChannel('DelayProfile','TDL-C','DelaySpread',delaySpread, ...
     'NormalizeChannelOutputs',false,'RandomStream','mt19937ar with seed');
 end
 
-function [precoder,receiver] = beamformers(H,NrfTx,NrfRx,Wgroup)
+function [precoder,receiver] = beamformers(H,NrfTx,NrfRx,Wgroup,phaseBits)
 [Nr,Nt,K] = size(H);
 Rt = mean(pagemtimes(H,'ctranspose',H,'none'),3);
 Rr = mean(pagemtimes(H,'none',H,'ctranspose'),3);
@@ -395,21 +437,15 @@ Rr = mean(pagemtimes(H,'none',H,'ctranspose'),3);
 [Vr,Dr] = eig((Rr+Rr')/2,'vector');
 [~,txOrder] = sort(real(Dt),'descend');
 [~,rxOrder] = sort(real(Dr),'descend');
-F = exp(1i*angle(Vt(:,txOrder(1:NrfTx))))/sqrt(Nt);
-W = exp(1i*angle(Vr(:,rxOrder(1:NrfRx))))/sqrt(Nr);
+step = 2*pi/2^phaseBits;
+txPhase = step*round(angle(Vt(:,txOrder(1:NrfTx)))/step);
+rxPhase = step*round(angle(Vr(:,rxOrder(1:NrfRx)))/step);
+F = exp(1i*txPhase)/sqrt(Nt);
+W = exp(1i*rxPhase)/sqrt(Nr);
 receiver = orth(W);
 effective = pagemtimes(receiver','none',H,'none');
 effective = pagemtimes(effective,F);
 precoder = complex(zeros(Nt,K,'like',H));
-if Wgroup == 1
-    % Original per-tone method, used solely by the diagnostic.
-    for k = 1:K
-        [~,~,V] = svd(effective(:,:,k),'econ');
-        w = F*V(:,1);
-        precoder(:,k) = w/norm(w);
-    end
-    return
-end
 previous = [];
 for first = 1:Wgroup:K
     block = first:min(first+Wgroup-1,K);
