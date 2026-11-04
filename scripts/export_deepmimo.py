@@ -2,13 +2,14 @@ from pathlib import Path
 import json
 
 import deepmimo as dm
+from deepmimo.datasets.dataset import MacroDataset
 import numpy as np
 from scipy.io import savemat
 
 scenario = "i2_28b"
 dm.download(scenario)
 dataset = dm.load(scenario)
-if hasattr(dataset, "datasets"):
+if isinstance(dataset, MacroDataset):
     dataset = dataset.datasets[0]
 print("Loaded", scenario, "keys", list(dataset.keys()))
 frequency = float(dataset.rt_params.frequency)
