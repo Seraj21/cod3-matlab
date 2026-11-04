@@ -1,0 +1,31 @@
+name: V2 Doppler-adaptive transmitter CNN
+on:
+  push:
+    branches: [mu-cnn-v2]
+    paths: [.github/workflows/v2_tx.yml]
+permissions:
+  contents: read
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+      - uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2025b
+          products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
+      - name: Check a complete short training cycle
+        uses: matlab-actions/run-command@v3
+        with:
+          command: addpath('mu_mimo','v2_mimo'); v2PrepareTX('v2_tx_smoke',30,20,2);
+      - name: Train the transmitter CNN on independent channels
+        uses: matlab-actions/run-command@v3
+        with:
+          command: v2_prepare_tx;
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: v2-transmitter-model
+          path: v2_tx_training/
+          if-no-files-found: warn

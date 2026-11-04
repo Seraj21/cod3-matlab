@@ -4,7 +4,7 @@ cfg=scene.Config;
 x=sum(permute(weights,[3 4 1 2]).*reshape(single(grid),r.K,r.L,1,cfg.Users),4);
 wave=nrOFDMModulate(r.Carrier,x,'Windowing',0);
 [distorted,txPhase,paGain]=muRadio(wave,cfg,muSeed(scene.Seed,15),true,0);
-channel=muChannel(cfg,scene.Front,cfg.SampleRate,scene.Seed);
+channel=v2Channel(cfg,scene.Front,cfg.SampleRate,scene.Seed);
 channel.ChannelResponseOutput='path-gains';
 input=[distorted.*scene.Front.ChannelGain.';zeros(scene.Tail,cfg.RFChains,'single')];
 if truthNeeded
