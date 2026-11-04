@@ -74,3 +74,15 @@ verifyEqual(testCase,csirs.NumCSIRSPorts,8);
 verifySize(testCase,estimate,[144 12 8 8]);
 verifyLessThan(testCase,noise,1e-8);
 end
+function testCFOFromCyclicPrefix(testCase)
+carrier = nrCarrierConfig('NSizeGrid',12,'SubcarrierSpacing',60,'CyclicPrefix','extended');
+ofdm = nrOFDMInfo(carrier);
+rng(442);
+grid = complex(randn(144,12,3),randn(144,12,3));
+tx = nrOFDMModulate(carrier,grid,'Windowing',0);
+delay = 35;
+waveform = [zeros(delay,3);tx;zeros(100,3)];
+waveform = waveform.*exp(1i*2*pi*2800*(0:size(waveform,1)-1).'/ofdm.SampleRate);
+estimate = estimateCFO(waveform,delay,ofdm,12);
+verifyEqual(testCase,estimate,2800,'AbsTol',1e-6);
+end

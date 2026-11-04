@@ -1,275 +1,235 @@
-function code1233_link(M, numSlots, outputFolder, arraySize, snrDb, testSeedOffset)
-% Compare practical channel estimators and a perfect-reference receiver.
+function code1233_link(M,numSlots,outputFolder,arraySize,snrDb,testSeedOffset,options)
+% Practical hybrid beamforming and matched post-LDPC channel-estimator comparison.
 arguments
-    M (1,1) double {mustBeMember(M,[256 512])} = 256
+    M (1,1) double {mustBeMember(M,[256 512])} = 512
     numSlots (1,1) double {mustBeInteger,mustBePositive} = 32
     outputFolder (1,1) string = "results"
     arraySize (1,1) double {mustBeMember(arraySize,[32 64])} = 32
-    snrDb (1,:) double {mustBeFinite} = [0:0.5:10, 11:20]
+    snrDb (1,:) double {mustBeFinite} = [0:.5:10 11:20]
     testSeedOffset (1,1) double {mustBeInteger,mustBeNonnegative} = 0
+    options.Mode (1,1) string {mustBeMember(options.Mode,["train" "evaluate"])} = "evaluate"
+    options.ModelFile (1,1) string = ""
+    options.NumRB (1,1) double {mustBeInteger,mustBePositive} = 66
+    options.TrainingSlots (1,1) double {mustBeInteger,mustBePositive} = 24
+    options.TestProfile (1,1) string = "CDL-C"
 end
-assert(~isempty(snrDb) && all(diff(snrDb)>0),"SNR points must be increasing.");
+assert(~isempty(snrDb) && all(diff(snrDb)>0));
+assert(snrDb(1)>=0 && snrDb(end)<=20,"The evaluation range is 0 to 20 dB.");
 if ~isfolder(outputFolder)
     mkdir(outputFolder);
 end
-
-carrier = nrCarrierConfig('NSizeGrid',66,'SubcarrierSpacing',60,'CyclicPrefix','extended');
+carrier = nrCarrierConfig('NSizeGrid',options.NumRB,'SubcarrierSpacing',60,'CyclicPrefix','extended');
 ofdm = nrOFDMInfo(carrier);
-K = 12 * carrier.NSizeGrid;
+K = 12*carrier.NSizeGrid;
 L = carrier.SymbolsPerSlot;
 slotSamples = sum(ofdm.SymbolLengths(1:L));
-carrierFrequency = 28e9;
-speedKmh = 120;
-maxDoppler = (speedKmh / 3.6) * carrierFrequency / 299792458;
-delaySpread = 1000e-9;
-targetRate = 0.5;
-trainingSNR = [0 5 15 30 40];
-numTrainingSlots = 16;
-bitsPerSymbol = log2(M);
-
-% Reserve two symbols for control and transmit one-port PDSCH DM-RS.
 pdsch = nrPDSCHConfig('PRBSet',0:carrier.NSizeGrid-1,'SymbolAllocation',[2 L-2], ...
-    'MappingType','A','Modulation','256QAM','NumLayers',1);
+    'MappingType','A','Modulation','256QAM','NumLayers',1,'EnablePTRS',true);
 pdsch.DMRS.NumCDMGroupsWithoutData = 1;
 pdsch.DMRS.DMRSAdditionalPosition = 3;
+pdsch.PTRS.TimeDensity = 1;
+pdsch.PTRS.FrequencyDensity = 2;
 dataIndices = nrPDSCHIndices(carrier,pdsch);
 pilotIndices = nrPDSCHDMRSIndices(carrier,pdsch);
 pilotSymbols = nrPDSCHDMRS(carrier,pdsch);
+ptrsIndices = nrPDSCHPTRSIndices(carrier,pdsch);
+ptrsSymbols = nrPDSCHPTRS(carrier,pdsch);
 assert(isempty(intersect(dataIndices,pilotIndices)));
-pilotMask = false(K,L);
-pilotMask(pilotIndices) = true;
-prgWidth = 24; % Two resource blocks per precoding group.
-pilot = pilotLayout(pilotMask,prgWidth);
+assert(isempty(intersect(dataIndices,ptrsIndices)));
+mask = false(K,L);
+mask(pilotIndices) = true;
+pilot = pilotLayout(mask,24);
 [~,pilot.dataTimes] = ind2sub([K L],dataIndices);
 [stencil,groups] = makeStencil(pilot);
-codedBitsPerSlot = numel(dataIndices) * bitsPerSymbol;
-payloadBitsPerSlot = 8 * floor(targetRate * codedBitsPerSlot / 8);
-% MATLAB's NR LDPC rate matcher has no 512-QAM mode. Use its QPSK bit
-% interleaver consistently at both ends for the experimental 512-QAM map.
-rateMatchMod = '256QAM';
-if M == 512
-    rateMatchMod = 'QPSK';
-end
-encoder = nrDLSCH('TargetCodeRate',targetRate);
-decoder = nrDLSCHDecoder('TargetCodeRate',targetRate, ...
-    'TransportBlockLength',payloadBitsPerSlot,'MaximumLDPCIterationCount',20);
-
-interleaverStream = RandStream('mt19937ar','Seed',1729);
-bitOrder = randperm(interleaverStream,codedBitsPerSlot).';
-
-% Check CRC, LDPC, interleaving, and QAM mapping as one noiseless chain.
-testStream = RandStream('mt19937ar','Seed',2000);
-testPayload = int8(randi(testStream,[0 1],payloadBitsPerSlot,1));
-setTransportBlock(encoder,testPayload);
-testCoded = encoder(rateMatchMod,1,codedBitsPerSlot,0);
-testSymbols = qammod(testCoded(bitOrder),M,'InputType','bit','UnitAveragePower',true);
-testHard = qamdemod(testSymbols,M,'OutputType','bit','UnitAveragePower',true);
-assert(isequal(logical(testHard(:)),logical(testCoded(bitOrder))));
-testLLR = zeros(codedBitsPerSlot,1);
-testLLR(bitOrder) = 12*(1-2*double(testHard(:)));
-[testDecoded,testCRCFailed] = decoder(testLLR,rateMatchMod,1,0);
-assert(~testCRCFailed && all(testDecoded(:)==testPayload(:)),'Coded loopback failed.');
-fprintf('Verified noiseless CRC, LDPC, interleaver and %d-QAM loopback.\n',M);
-
-estimatorNames = {'LS','LMMSE','CNN','Perfect CSI + timing'};
-slotErrors = zeros(numSlots,numel(snrDb),numel(estimatorNames));
-txPowerPerDataRE = zeros(numSlots,1);
-antennaSignalPowerPerDataRE = zeros(numSlots,1);
-rfSignalPowerPerDataRE = zeros(numSlots,1);
-rfNoisePowerAt0dB = zeros(numSlots,1);
+codedBitsPerSlot = numel(dataIndices)*log2(M);
+payloadBitsPerSlot = 8*floor(.5*codedBitsPerSlot/8);
+codec = ExperimentalLDPC(payloadBitsPerSlot,codedBitsPerSlot,log2(M),.5);
+orderStream = RandStream('mt19937ar','Seed',1729);
+bitOrder = randperm(orderStream,codedBitsPerSlot).';
 c = 6+(arraySize==64);
-Nt = arraySize;
-Nr = arraySize;
-numRF = 8;
-phaseBits = 4;
-soundingSNR = 15;
-feedbackDelay = slotSamples/ofdm.SampleRate;
-timingSearchSamples = ceil(12e-6*ofdm.SampleRate);
-horizontalCorrelation = .45;
-verticalCorrelation = .35;
-arrayRows = arraySize/8;
-rxFactor = arrayFactor(arrayRows,8,horizontalCorrelation,verticalCorrelation);
-txFactor = rxFactor;
-kSigned = (-K/2:K/2-1).';
-phaseStep = 2*pi*kSigned/double(ofdm.Nfft);
-timingAbsError = zeros(1,numel(snrDb));
-configName = sprintf('%dx%d HBF',Nt,Nr);
-fprintf('%d-QAM | %s | %d training slots and %d test slots\n',M,configName,numTrainingSlots,numSlots);
+settings = struct('ArraySize',arraySize,'CarrierFrequency',28e9,'PhaseBits',4, ...
+    'PRGWidth',24,'SoundingSNR',15,'SampleRate',ofdm.SampleRate, ...
+    'PhaseNoiseLevel',[-85 -100 -115],'PhaseNoiseOffset',[1e4 1e5 1e6], ...
+    'InputBackoff',10,'AMPMDegrees',3,'FrequencyOffset',2800);
+config = struct('Version',2,'M',M,'ArraySize',arraySize,'NumRB',options.NumRB, ...
+    'Settings',settings,'PayloadBits',payloadBitsPerSlot,'CodedBits',codedBitsPerSlot);
+modelFile = options.ModelFile;
+if modelFile == ""
+    modelFile = fullfile(outputFolder,sprintf('receiver_model_%d.mat',arraySize));
+end
+trainingSlots = options.TrainingSlots;
+if options.Mode == "evaluate" && isfile(modelFile)
+    model = load(modelFile,'cnn','lmmse','config','trainingProfiles','trainingSNR');
+    assert(isequaln(model.config,config),"Cached model configuration does not match.");
+    cnn = model.cnn;
+    lmmse = model.lmmse;
+    trainingProfiles = model.trainingProfiles;
+    trainingSNR = model.trainingSNR;
+    trainingSlots = 0;
+else
+    trainingProfiles = ["TDL-A" "TDL-B" "CDL-A" "CDL-B"];
+    trainingSNR = [0 5 10 15 20];
+end
+testSlots = numSlots;
+if options.Mode == "train"
+    testSlots = 0;
+end
+trainingTruth = cell(trainingSlots,1);
+trainingSamples = cell(trainingSlots,numel(trainingSNR));
+choiceStream = RandStream('mt19937ar','Seed',110000+c);
 trainingPayload = RandStream('mt19937ar','Seed',60000+c);
 trainingNoise = RandStream('mt19937ar','Seed',50000+c);
-testPayloadStream = RandStream('mt19937ar','Seed',10000+c+testSeedOffset);
+payloadStream = RandStream('mt19937ar','Seed',10000+c+testSeedOffset);
 testNoise = RandStream('mt19937ar','Seed',20000+c+testSeedOffset);
-trainingSounding = RandStream('mt19937ar','Seed',80000+c);
-testSounding = RandStream('mt19937ar','Seed',90000+c+testSeedOffset);
-trainingTruth = cell(numTrainingSlots,1);
-trainingSamples = cell(numTrainingSlots,numel(trainingSNR));
-
-probe = makeChannel(Nt,Nr,ofdm.SampleRate,delaySpread,maxDoppler);
-probe.ChannelFiltering = false;
-probe.OutputDataType = 'single';
-probe.ChannelResponseOutput = 'ofdm-response';
-channel = makeChannel(Nt,Nr,ofdm.SampleRate,delaySpread,maxDoppler);
-channel.InitialTime = feedbackDelay;
-channel.ChannelResponseOutput = 'ofdm-response';
-channelInfo = info(channel);
-tailSamples = max(channelInfo.MaximumChannelDelay,timingSearchSamples);
-probe.NumTimeSamples = slotSamples + tailSamples;
-for slot = 1:numTrainingSlots+numSlots
-    training = slot <= numTrainingSlots;
+names = {'LS','LMMSE','CNN','Perfect CSI + timing'};
+slotErrors = zeros(testSlots,numel(snrDb),4);
+crcErrors = false(testSlots,numel(snrDb),4);
+calibration = zeros(testSlots,7);
+timingAbsError = zeros(testSlots,numel(snrDb));
+cfoResidual = zeros(testSlots,numel(snrDb));
+kSigned = (-K/2:K/2-1).';
+phaseStep = 2*pi*kSigned/double(ofdm.Nfft);
+fprintf('Practical HBF %dx%d | %d-QAM | %d training, %d test slots\n', ...
+    arraySize,arraySize,M,trainingSlots,testSlots);
+for slot = 1:trainingSlots+testSlots
+    training = slot<=trainingSlots;
     if training
-        seed = 40000 + 1000*c + slot;
-        payloadStream = trainingPayload;
+        profile = trainingProfiles(mod(slot-1,numel(trainingProfiles))+1);
+        spread = [100 300 600 1000]*1e-9;
+        spread = spread(randi(choiceStream,4));
+        speed = 120*rand(choiceStream);
+        seed = 40000+1000*c+slot;
+        payload = int8(randi(trainingPayload,[0 1],payloadBitsPerSlot,1));
         noiseStream = trainingNoise;
-        soundingStream = trainingSounding;
     else
-        seed = 30000 + 1000*c + testSeedOffset + slot-numTrainingSlots;
-        payloadStream = testPayloadStream;
+        trial = slot-trainingSlots;
+        profile = options.TestProfile;
+        spread = 1e-6;
+        speed = 120;
+        seed = 30000+1000*c+testSeedOffset+trial;
+        payload = int8(randi(payloadStream,[0 1],payloadBitsPerSlot,1));
         noiseStream = testNoise;
-        soundingStream = testSounding;
     end
-    release(probe);
-    release(channel);
-    probe.Seed = seed;
-    channel.Seed = seed;
-    response = probe(carrier);
-    assert(size(response,1)==K && size(response,3)==Nr && size(response,4)==Nt);
-    Hsounding = correlateResponse(reshape(permute(response(:,1,:,:),[3 4 1 2]),Nr,Nt,K), ...
-        rxFactor,txFactor);
-    clear response
-    soundingError = complex(randn(soundingStream,size(Hsounding),'single'), ...
-        randn(soundingStream,size(Hsounding),'single'))/sqrt(2*10^(soundingSNR/10));
-    [precoder,receiver] = beamformers(Hsounding+soundingError,numRF,numRF,prgWidth,phaseBits);
-    clear Hsounding soundingError
-    assert(max(abs(sum(abs(precoder).^2,1)-1)) < 2e-5);
-
-    payload = int8(randi(payloadStream,[0 1],payloadBitsPerSlot,1));
-    setTransportBlock(encoder,payload);
-    coded = encoder(rateMatchMod,1,codedBitsPerSlot,0);
+    coded = codec.encode(payload);
     layerGrid = complex(zeros(K,L));
     layerGrid(dataIndices) = qammod(coded(bitOrder),M,'InputType','bit','UnitAveragePower',true);
     layerGrid(pilotIndices) = pilotSymbols;
-    antennaGrid = reshape(single(layerGrid),K,L,1).*reshape(precoder.',K,1,Nt);
-    tx = nrOFDMModulate(carrier,antennaGrid,'Windowing',0);
-    assert(size(tx,1)==slotSamples);
-    [rx,response,timingOffset] = channel([tx*conj(txFactor); zeros(tailSamples,Nt,'like',tx)],carrier);
-    if ~training
-        trial = slot-numTrainingSlots;
-        % The RF projection is orthonormal, so white noise has the same
-        % variance before projection and on each retained RF output.
-        assert(norm(double(receiver'*receiver)-eye(size(receiver,2)),'fro') < 1e-5);
-        antennaWaveform = rx*rxFactor.';
-    end
-    rx = double(rx*(rxFactor.'*conj(receiver)));
-    H = correlateResponse(permute(response(:,1:L,:,:),[3 4 1 2]),rxFactor,txFactor);
-    clear response
-    projected = pagemtimes(receiver','none',H,'none');
-    Hsingle = pagemtimes(projected,reshape(precoder,Nt,1,K,1));
-    Hgrid = double(reshape(permute(Hsingle,[3 4 1 2]),K,L,[]));
-    clear H projected Hsingle
-
-    baseNoise = (randn(noiseStream,size(rx)) + 1i*randn(noiseStream,size(rx))) ...
+    layerGrid(ptrsIndices) = ptrsSymbols;
+    packet = practicalPacket(carrier,layerGrid,settings,profile,spread,speed,seed);
+    rx = packet.Waveform;
+    baseNoise = complex(randn(noiseStream,size(rx)),randn(noiseStream,size(rx))) ...
         /sqrt(2*double(ofdm.Nfft));
-    oracleSamples = timingOffset+(1:slotSamples);
+    points = snrDb;
     if training
-        cleanOffset = estimateTiming(carrier,rx,pilotIndices,pilotSymbols,timingSearchSamples);
-        trainingTruth{slot} = single(Hgrid.*exp(1i*phaseStep*(cleanOffset-timingOffset)));
-        for s = 1:numel(trainingSNR)
-            noiseVariance = 10^(-trainingSNR(s)/10);
-            noisyWaveform = rx+sqrt(noiseVariance)*baseNoise;
-            offset = estimateTiming(carrier,noisyWaveform,pilotIndices,pilotSymbols,timingSearchSamples);
-            receivedGrid = nrOFDMDemodulate(carrier,noisyWaveform(offset+(1:slotSamples),:));
-            [ls,pilotGrid,nVar,scale] = practicalInputs(receivedGrid,pilotIndices,pilotSymbols,noiseVariance,pilot);
-            timingPhase = single(exp(1i*phaseStep*(offset-cleanOffset)));
-            trainingSamples{slot,s} = {single(ls),single(pilotGrid),nVar,scale,timingPhase};
-        end
-        if slot == numTrainingSlots
-            lmmse = trainLMMSE(trainingTruth,stencil,groups,pilotIndices);
-            cnn = trainCNN(trainingSamples,trainingTruth,lmmse,stencil,groups,pilot,c);
-            cnnFingerprint = cellfun(@(w) gather(extractdata(w)),cnn.Learnables.Value, ...
-                'UniformOutput',false);
-            clear trainingSamples trainingTruth
-            fprintf('Training completed; starting independent evaluation.\n');
-        end
-        continue
+        points = trainingSNR;
+        cleanOffset = estimateTiming(carrier,rx,pilotIndices,pilotSymbols,ceil(12e-6*ofdm.SampleRate));
+        trainingTruth{slot} = single(packet.Channel.*exp(1i*phaseStep*(cleanOffset-packet.TimingOffset)));
+    else
+        white = nrOFDMDemodulate(carrier,baseNoise(packet.TimingOffset+(1:slotSamples),:));
+        clean = nrOFDMDemodulate(carrier,rx(packet.TimingOffset+(1:slotSamples),:));
+        noisePower = mean(abs(white).^2,'all');
+        assert(abs(10*log10(noisePower))<.15);
+        calibration(trial,:) = [trial packet.TxPower packet.PAOutputPower ...
+            packet.AntennaPower mean(abs(clean).^2,'all') noisePower packet.SelectedBank];
     end
-
-    txPowerPerDataRE(trial) = mean(sum(abs(antennaGrid(double(dataIndices) + (0:Nt-1)*K*L)).^2,2));
-    antennaGridRx = nrOFDMDemodulate(carrier,antennaWaveform(oracleSamples,:));
-    rfGrid = nrOFDMDemodulate(carrier,rx(oracleSamples,:));
-    noiseGrid = nrOFDMDemodulate(carrier,baseNoise(oracleSamples,:));
-    antennaSignalPowerPerDataRE(trial) = mean(abs(antennaGridRx(double(dataIndices) + (0:Nr-1)*K*L)).^2,'all');
-    rfIndices = double(dataIndices) + (0:size(rx,2)-1)*K*L;
-    rfSignalPowerPerDataRE(trial) = mean(abs(rfGrid(rfIndices)).^2,'all');
-    rfNoisePowerAt0dB(trial) = mean(abs(noiseGrid(rfIndices)).^2,'all');
-    assert(abs(10*log10(rfNoisePowerAt0dB(trial))) < 0.15,'Noise calibration failed.');
-    for s = 1:numel(snrDb)
-        noiseVariance = 10^(-snrDb(s)/10);
-        noisyWaveform = rx+sqrt(noiseVariance)*baseNoise;
-        offset = estimateTiming(carrier,noisyWaveform,pilotIndices,pilotSymbols,timingSearchSamples);
-        timingAbsError(s) = timingAbsError(s)+abs(double(offset)-double(timingOffset));
-        receivedGrid = nrOFDMDemodulate(carrier,noisyWaveform(offset+(1:slotSamples),:));
-        oracleGrid = nrOFDMDemodulate(carrier,noisyWaveform(oracleSamples,:));
-        [~,~,oracleNoise] = practicalInputs(oracleGrid,pilotIndices,pilotSymbols,noiseVariance,pilot);
-        [ls,pilotGrid,nVar,scale] = practicalInputs(receivedGrid,pilotIndices,pilotSymbols,noiseVariance,pilot);
+    for s = 1:numel(points)
+        variance = 10^(-points(s)/10);
+        noisy = rx+sqrt(variance)*baseNoise;
+        offset = estimateTiming(carrier,noisy,pilotIndices,pilotSymbols,ceil(12e-6*ofdm.SampleRate));
+        frequency = estimateCFO(noisy,offset,ofdm,L);
+        compensated = noisy.*exp(-1i*2*pi*frequency*(0:size(noisy,1)-1).'/ofdm.SampleRate);
+        received = nrOFDMDemodulate(carrier,compensated(offset+(1:slotSamples),:));
+        [ls,pilotGrid,nVar,scale] = practicalInputs(received,pilotIndices,pilotSymbols,variance,pilot);
+        residualPhase = exp(-1i*2*pi*frequency*packet.SymbolCenters/ofdm.SampleRate);
+        if training
+            % Targets retain RF phase. CFO compensation is known to this receiver.
+            correction = exp(1i*phaseStep*(offset-cleanOffset)).*residualPhase;
+            trainingSamples{slot,s} = {single(ls),single(pilotGrid),nVar,scale,single(correction)};
+            continue
+        end
+        timingAbsError(trial,s) = abs(offset-packet.TimingOffset);
+        cfoResidual(trial,s) = settings.FrequencyOffset-frequency;
         wiener = estimateLMMSE(pilotGrid,nVar,scale,lmmse,stencil,groups);
-        cnnEstimate = estimateCNN(cnn,ls,wiener,pilotGrid,scale,nVar,pilot);
-        estimates = {ls,wiener,cnnEstimate,Hgrid};
-        for est = 1:numel(estimatorNames)
-            % The same equalizer, soft demapper and LDPC decoder are used.
-            h = estimates{est};
-            observed = receivedGrid;
-            variance = nVar;
-            if est == numel(estimatorNames)
-                observed = oracleGrid;
-                variance = oracleNoise;
+        neural = estimateCNN(cnn,ls,wiener,pilotGrid,scale,nVar,pilot);
+        oracle = packet.Channel.*reshape(residualPhase,1,L,1);
+        estimates = {ls,wiener,neural,oracle};
+        for method = 1:4
+            observed = received;
+            methodNoise = nVar;
+            if method==4
+                observed = nrOFDMDemodulate(carrier,compensated( ...
+                    packet.TimingOffset+(1:slotSamples),:));
+                [~,~,methodNoise] = practicalInputs(observed,pilotIndices,pilotSymbols,variance,pilot);
             end
+            h = estimates{method};
             gain = max(sum(abs(h).^2,3),eps);
             equalized = sum(conj(h).*observed,3)./gain;
+            equalized = correctPTRS(equalized,ptrsIndices,ptrsSymbols);
             soft = qamdemod(equalized(dataIndices),M,'OutputType','approxllr', ...
                 'UnitAveragePower',true,'NoiseVariance',1);
             pilotError = abs(equalized(pilotIndices)-pilotSymbols).^2;
             pilotGain = gain(pilotIndices);
             groupGain = max(pilot.timeGroups.'*pilotGain,eps);
             residualAtPilot = max(0,(pilot.timeGroups.'*(pilotGain.*pilotError) ...
-                - variance*pilot.timeCounts)./groupGain);
+                -methodNoise*pilot.timeCounts)./groupGain);
             residual = pilot.timeInterp*residualAtPilot;
-            dataVariance = variance./gain(dataIndices) + residual(pilot.dataTimes);
-            weights = 1./reshape(dataVariance,1,[]);
+            dataVariance = methodNoise./gain(dataIndices)+residual(pilot.dataTimes);
+            weighted = reshape(reshape(soft,log2(M),[])./reshape(dataVariance,1,[]),[],1);
             deinterleaved = zeros(codedBitsPerSlot,1);
-            deinterleaved(bitOrder) = reshape(reshape(soft,bitsPerSymbol,[]).*weights,[],1);
-            reset(decoder);
-            decoded = decoder(max(-50,min(50,deinterleaved)),rateMatchMod,1,0);
-            slotErrors(trial,s,est) = nnz(decoded(:) ~= payload(:));
+            deinterleaved(bitOrder) = weighted;
+            [decoded,failed] = codec.decode(max(-50,min(50,deinterleaved)));
+            slotErrors(trial,s,method) = nnz(decoded(:)~=payload(:));
+            crcErrors(trial,s,method) = failed;
         end
     end
-    if mod(slot-numTrainingSlots,16) == 0 || slot == numTrainingSlots+numSlots
-        fprintf('  %d/%d test slots\n',slot-numTrainingSlots,numSlots);
+    if training && slot==trainingSlots
+        lmmse = trainLMMSE(trainingTruth,stencil,groups,pilotIndices);
+        cnn = trainCNN(trainingSamples,trainingTruth,lmmse,stencil,groups,pilot,c);
+        save(modelFile,'cnn','lmmse','config','trainingProfiles','trainingSNR','-v7.3');
+        clear trainingSamples trainingTruth
+        fprintf('Frozen model saved. Held-out evaluation starts.\n');
+    end
+    if ~training && (mod(trial,8)==0 || trial==testSlots)
+        fprintf('Completed %d/%d test slots\n',trial,testSlots);
     end
 end
-
-postBitErrors = reshape(sum(slotErrors,1),numel(snrDb),numel(estimatorNames)).';
-totalPayloadBits = repmat(payloadBitsPerSlot*numSlots,size(postBitErrors));
+if options.Mode=="train"
+    return
+end
+cnnFingerprint = cellfun(@(w)gather(extractdata(w)),cnn.Learnables.Value,'UniformOutput',false);
+postBitErrors = reshape(sum(slotErrors,1),numel(snrDb),4).';
+totalPayloadBits = repmat(payloadBitsPerSlot*testSlots,size(postBitErrors));
 postBer = postBitErrors./totalPayloadBits;
-timingMAE = timingAbsError/numSlots;
-metrics = table(repelem(estimatorNames(:),numel(snrDb)),repmat(snrDb(:),numel(estimatorNames),1), ...
+[trials,snrIndex,methodIndex] = ndgrid(1:testSlots,1:numel(snrDb),1:4);
+nameColumn = names(:);
+snrColumn = snrDb(:);
+slots = table(trials(:),snrColumn(snrIndex(:)),nameColumn(methodIndex(:)), ...
+    slotErrors(:),repmat(payloadBitsPerSlot,numel(slotErrors),1), ...
+    'VariableNames',{'Slot','SNR_dB','Estimator','PostLDPC_BitErrors','PayloadBits'});
+writetable(slots,fullfile(outputFolder,'slot_errors.csv'));
+metrics = table(repelem(names(:),numel(snrDb)),repmat(snrDb(:),4,1), ...
     reshape(postBer.',[],1),reshape(postBitErrors.',[],1),reshape(totalPayloadBits.',[],1), ...
     'VariableNames',{'Estimator','SNR_dB','PostLDPC_BER','PostLDPC_BitErrors','TotalPayloadBits'});
 writetable(metrics,fullfile(outputFolder,'post_ldpc_ber.csv'));
-[slotIndex,snrIndex,estimatorIndex] = ndgrid(1:numSlots,1:numel(snrDb),1:numel(estimatorNames));
-estimatorColumn = estimatorNames(:);
-snrColumn = snrDb(:);
-slotMetrics = table(slotIndex(:),snrColumn(snrIndex(:)),estimatorColumn(estimatorIndex(:)), ...
-    slotErrors(:),repmat(payloadBitsPerSlot,numel(slotErrors),1), ...
-    'VariableNames',{'Slot','SNR_dB','Estimator','PostLDPC_BitErrors','PayloadBits'});
-writetable(slotMetrics,fullfile(outputFolder,'slot_errors.csv'));
-calibration = table((1:numSlots).',txPowerPerDataRE,antennaSignalPowerPerDataRE, ...
-    rfSignalPowerPerDataRE,rfNoisePowerAt0dB,'VariableNames', ...
-    {'Slot','TxPowerPerDataRE','AntennaSignalPowerPerDataRE','RFSignalPowerPerDataRE','RFNoisePowerAt0dB'});
+calibration = array2table(calibration,'VariableNames',{'Slot','TxPowerPerRE', ...
+    'PAOutputPowerRatio','AntennaSignalPowerPerRE','RFSignalPowerPerRE','RFNoisePowerAt0dB','SelectedBank'});
 writetable(calibration,fullfile(outputFolder,'snr_calibration.csv'));
-save(fullfile(outputFolder,'post_ldpc_ber.mat'),'M','numSlots','cnnFingerprint','testSeedOffset','numTrainingSlots','arraySize','numRF','prgWidth', ...
-    'configName','estimatorNames','snrDb','postBer','postBitErrors','totalPayloadBits', ...
-    'payloadBitsPerSlot','slotErrors','calibration','maxDoppler','delaySpread','speedKmh','carrierFrequency','targetRate','pilot', ...
-    'phaseBits','soundingSNR','feedbackDelay','horizontalCorrelation','verticalCorrelation','timingMAE');
+save(fullfile(outputFolder,'post_ldpc_ber.mat'),'M','arraySize','numSlots','snrDb', ...
+    'names','slotErrors','postBitErrors','postBer','totalPayloadBits','payloadBitsPerSlot', ...
+    'cnnFingerprint','settings','config','trainingProfiles','calibration','crcErrors', ...
+    'timingAbsError','cfoResidual','testSeedOffset');
+end
+
+function equalized = correctPTRS(equalized,indices,symbols)
+[K,L] = size(equalized);
+[~,times] = ind2sub([K L],indices);
+phasor = accumarray(times,equalized(indices).*conj(symbols),[L 1]);
+valid = find(abs(phasor)>0);
+if numel(valid)>1
+    phase = interp1(valid,unwrap(angle(phasor(valid))), ...
+        min(valid(end),max(valid(1),(1:L).')),'linear');
+    equalized = equalized.*exp(-1i*phase.');
+end
 end
 
 function p = pilotLayout(mask,W)
@@ -323,7 +283,7 @@ function [indices,groups] = makeStencil(p)
 k = (1:p.K).';
 localK = mod(k-1,p.W)+1;
 base = k-localK;
-count = 4;
+count = 6;
 center = interp1(double(p.freq),1:p.P,localK,'nearest','extrap');
 start = max(1,min(p.P-count+1,center-1));
 neighbors = p.freq(start+(0:count-1));
@@ -354,7 +314,9 @@ for g = 1:max(groups)
             n = n+numel(rows);
         end
     end
-    model(g).R = (xx+xx')/(2*n);
+    covariance = (xx+xx')/(2*n);
+    shrinkage = min(.05,width/n);
+    model(g).R = (1-shrinkage)*covariance+shrinkage*real(trace(covariance))/width*eye(width);
     model(g).C = xy/n;
 end
 assert(size(stencil,1)==K);
@@ -447,57 +409,3 @@ energy = sum(abs(mag(1:min(window+1,size(mag,1)),:)).^2,2);
 offset = peak-1;
 end
 
-function factor = arrayFactor(rows,columns,rhoX,rhoY)
-vertical = toeplitz(rhoY.^(0:rows-1));
-horizontal = toeplitz(rhoX.^(0:columns-1));
-factor = single(chol(kron(horizontal,vertical),'lower'));
-end
-
-function h = correlateResponse(h,rxFactor,txFactor)
-h = pagemtimes(rxFactor,pagemtimes(h,txFactor'));
-end
-
-function channel = makeChannel(Nt,Nr,Fs,delaySpread,maxDoppler)
-channel = nrTDLChannel('DelayProfile','TDL-C','DelaySpread',delaySpread, ...
-    'MaximumDopplerShift',maxDoppler,'SampleRate',Fs,'PathGainSampleRate','auto', ...
-    'NumTransmitAntennas',Nt, ...
-    'NumReceiveAntennas',Nr,'MIMOCorrelation','Low','NormalizePathGains',true, ...
-    'NormalizeChannelOutputs',false,'RandomStream','mt19937ar with seed');
-end
-
-function [precoder,receiver] = beamformers(H,NrfTx,NrfRx,Wgroup,phaseBits)
-[Nr,Nt,K] = size(H);
-Rt = mean(pagemtimes(H,'ctranspose',H,'none'),3);
-Rr = mean(pagemtimes(H,'none',H,'ctranspose'),3);
-[Vt,Dt] = eig((Rt+Rt')/2,'vector');
-[Vr,Dr] = eig((Rr+Rr')/2,'vector');
-[~,txOrder] = sort(real(Dt),'descend');
-[~,rxOrder] = sort(real(Dr),'descend');
-step = 2*pi/2^phaseBits;
-txPhase = step*round(angle(Vt(:,txOrder(1:NrfTx)))/step);
-rxPhase = step*round(angle(Vr(:,rxOrder(1:NrfRx)))/step);
-F = exp(1i*txPhase)/sqrt(Nt);
-W = exp(1i*rxPhase)/sqrt(Nr);
-receiver = orth(W);
-effective = pagemtimes(receiver','none',H,'none');
-effective = pagemtimes(effective,F);
-precoder = complex(zeros(Nt,K,'like',H));
-previous = [];
-for first = 1:Wgroup:K
-    block = first:min(first+Wgroup-1,K);
-    groupH = effective(:,:,block);
-    gram = mean(pagemtimes(groupH,'ctranspose',groupH,'none'),3);
-    [V,D] = eig((gram+gram')/2,'vector');
-    [~,best] = max(real(D));
-    w = F*V(:,best);
-    w = w/norm(w);
-    if ~isempty(previous)
-        overlap = previous'*w;
-        if abs(overlap)>1e-6
-            w = w*conj(overlap)/abs(overlap);
-        end
-    end
-    precoder(:,block) = repmat(w,1,numel(block));
-    previous = w;
-end
-end
