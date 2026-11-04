@@ -1,0 +1,28 @@
+name: MU MIMO implementation audit
+on:
+  push:
+    branches: [mu-downlink-tdlc]
+    paths:
+      - mu_mimo/**
+      - .github/workflows/mu_audit.yml
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2025b
+          products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
+      - uses: matlab-actions/run-tests@v3
+        with:
+          source-folder: .
+          select-by-folder: mu_mimo/tests
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: mu-implementation-probe
+          path: mu_probe/
