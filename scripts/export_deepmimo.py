@@ -37,10 +37,14 @@ result = dict(scenario=scenario, frequency=frequency, user_indices=selected+1,
               doppler_factor=np.nan_to_num(doppler_factor))
 for size in (32, 64):
     params = dm.ChannelParameters(freq_domain=False, num_paths=paths,
-                                  bs_antenna={"shape": [1, 8, size//8]},
-                                  ue_antenna={"shape": [1, 8, size//8]})
+                                  bs_antenna={"shape": [8, size//8]},
+                                  ue_antenna={"shape": [8, size//8]})
     channel = np.nan_to_num(np.asarray(dataset.compute_channels(params)))
     assert channel.shape==(len(selected), size, size, paths), channel.shape
+    # DeepMIMO stores horizontal elements first. MATLAB UPA stores vertical first.
+    order = np.array([horizontal+8*vertical for horizontal in range(8)
+                      for vertical in range(size//8)])
+    channel = channel[:, order, :, :][:, :, order, :]
     matrices = channel.transpose(0, 3, 1, 2)
     u, singular, vh = np.linalg.svd(matrices, full_matrices=False)
     assert np.max(singular[..., 1]) < 1e-4*np.max(singular[..., 0])

@@ -12,6 +12,8 @@ arguments
     options.NumRB (1,1) double {mustBeInteger,mustBePositive} = 66
     options.TrainingSlots (1,1) double {mustBeInteger,mustBePositive} = 24
     options.TestProfile (1,1) string = "CDL-C"
+    options.RayFile (1,1) string = ""
+    options.RayStart (1,1) double {mustBeInteger,mustBePositive} = 1
 end
 assert(~isempty(snrDb) && all(diff(snrDb)>0));
 assert(snrDb(1)>=0 && snrDb(end)<=20,"The evaluation range is 0 to 20 dB.");
@@ -115,7 +117,12 @@ for slot = 1:trainingSlots+testSlots
     layerGrid(dataIndices) = qammod(coded(bitOrder),M,'InputType','bit','UnitAveragePower',true);
     layerGrid(pilotIndices) = pilotSymbols;
     layerGrid(ptrsIndices) = ptrsSymbols;
-    packet = practicalPacket(carrier,layerGrid,settings,profile,spread,speed,seed);
+    packetSettings = settings;
+    if profile=="DeepMIMO"
+        packetSettings.RayFile = options.RayFile;
+        packetSettings.RayIndex = options.RayStart+trial-1;
+    end
+    packet = practicalPacket(carrier,layerGrid,packetSettings,profile,spread,speed,seed);
     rx = packet.Waveform;
     baseNoise = complex(randn(noiseStream,size(rx)),randn(noiseStream,size(rx))) ...
         /sqrt(2*double(ofdm.Nfft));

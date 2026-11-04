@@ -86,3 +86,39 @@ waveform = waveform.*exp(1i*2*pi*2800*(0:size(waveform,1)-1).'/ofdm.SampleRate);
 estimate = estimateCFO(waveform,delay,ofdm,12);
 verifyEqual(testCase,estimate,2800,'AbsTol',1e-6);
 end
+function testCodedAWGNControl(testCase)
+stream = RandStream('mt19937ar','Seed',418);
+codec = ExperimentalLDPC(2048,4500,9,.5);
+payload = int8(randi(stream,[0 1],2048,1));
+coded = codec.encode(payload);
+tx = qammod(coded,512,'InputType','bit','UnitAveragePower',true);
+baseNoise = complex(randn(stream,size(tx)),randn(stream,size(tx)))/sqrt(2);
+errors = zeros(1,2);
+points = [0 30];
+for i = 1:2
+    variance = 10^(-points(i)/10);
+    rx = tx+sqrt(variance)*baseNoise;
+    llr = qamdemod(rx,512,'OutputType','approxllr','UnitAveragePower',true, ...
+        'NoiseVariance',variance);
+    decoded = codec.decode(max(-50,min(50,llr)));
+    errors(i) = nnz(decoded~=payload);
+end
+verifyGreaterThan(testCase,errors(1),0);
+verifyEqual(testCase,errors(2),0);
+end
+function testExternalRayChannelConjugationAndDelay(testCase)
+carrier = nrCarrierConfig('NSizeGrid',12,'SubcarrierSpacing',60,'CyclicPrefix','extended');
+ofdm = nrOFDMInfo(carrier);
+rng(718);
+layer = complex(randn(144,12),randn(144,12));
+f = exp(1i*(0:4).')/sqrt(5);
+grid = layer.*reshape(f,1,1,5);
+tx = nrOFDMModulate(carrier,grid,'Windowing',0);
+rays = struct('Receive',[1;1i;-.2],'Transmit',f,'Delays',.37/ofdm.SampleRate,'DopplerFactor',0);
+channel = struct('Rays',rays,'InitialTime',0,'Doppler',0);
+[rx,H,offset] = applyMIMOChannel(channel,[tx;zeros(100,5)],carrier);
+received = nrOFDMDemodulate(carrier,rx(offset+(1:size(tx,1)),:));
+effective = pagemtimes(permute(H,[3 4 1 2]),f);
+expected = layer.*reshape(permute(effective,[3 4 1 2]),144,12,3);
+verifyEqual(testCase,received,double(expected),'AbsTol',2e-6);
+end

@@ -6,9 +6,14 @@ L = size(layerGrid,2);
 slotSamples = sum(ofdm.SymbolLengths(1:L));
 slotDuration = slotSamples/ofdm.SampleRate;
 doppler = speed/3.6*settings.CarrierFrequency/299792458;
-channel = practicalChannel(settings.ArraySize,ofdm.SampleRate,profile,spread,doppler,seed);
-channelInfo = info(channel);
-tail = max(channelInfo.MaximumChannelDelay,ceil(12e-6*ofdm.SampleRate));
+channel = practicalChannel(settings.ArraySize,ofdm.SampleRate,profile,spread,doppler,seed,settings);
+if isstruct(channel)
+    maximumDelay = ceil(max(channel.Rays.Delays)*ofdm.SampleRate)+16;
+else
+    channelInfo = info(channel);
+    maximumDelay = channelInfo.MaximumChannelDelay;
+end
+tail = max(maximumDelay,ceil(12e-6*ofdm.SampleRate));
 [banks,WRF] = hybridCodebook(settings.ArraySize/8,8,settings.PhaseBits);
 rxRoot = chol(WRF'*WRF);
 receiver = WRF/rxRoot;
@@ -26,9 +31,11 @@ for bank = 1:numel(banks)
     grid = reshape(reshape(soundGrid,K*L,8)*RF.',K,L,settings.ArraySize);
     tx = nrOFDMModulate(carrier,grid,'Windowing',0);
     [tx,~,~] = radioImpairments(tx,settings,seed+200000+bank,true,0);
-    release(channel);
+    if ~isstruct(channel)
+        release(channel);
+    end
     channel.InitialTime = (bank-1)*slotDuration;
-    [rx,~,~] = channel([tx;zeros(tail,settings.ArraySize)],carrier);
+    [rx,~,~] = applyMIMOChannel(channel,[tx;zeros(tail,settings.ArraySize)],carrier);
     [rx,~,~] = radioImpairments(rx,settings,seed+300000+bank,false,channel.InitialTime);
     % Antenna noise is white. Equivalent noise after explicit RF whitening is white.
     rx = rx*conj(receiver);
@@ -52,9 +59,11 @@ weights = hybridPrecoder(banks{selected},WRF,estimates{selected},settings.PRGWid
 antennaGrid = reshape(single(layerGrid),K,L,1).*reshape(single(weights.Precoder.'),K,1,[]);
 tx = nrOFDMModulate(carrier,antennaGrid,'Windowing',0);
 [distorted,txPhase,paGain] = radioImpairments(tx,settings,seed+400000,true,0);
-release(channel);
+if ~isstruct(channel)
+    release(channel);
+end
 channel.InitialTime = numel(banks)*slotDuration;
-[rx,response,offset] = channel([distorted;zeros(tail,settings.ArraySize)],carrier);
+[rx,response,offset] = applyMIMOChannel(channel,[distorted;zeros(tail,settings.ArraySize)],carrier);
 [rx,rxPhase,~] = radioImpairments(rx,settings,seed+500000,false,channel.InitialTime);
 packet.AntennaPower = mean(abs(nrOFDMDemodulate(carrier,rx(offset+(1:slotSamples),:))).^2,'all');
 packet.Waveform = double(rx*conj(weights.Receiver));
