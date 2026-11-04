@@ -11,13 +11,19 @@ Nr = size(rays.Receive,1);
 ofdm = nrOFDMInfo(carrier);
 K = 12*carrier.NSizeGrid;
 L = carrier.SymbolsPerSlot;
+P = numel(rays.Delays);
 k = (-K/2:K/2-1).';
 offset = 8;
 output = complex(zeros(N,Nr));
-response = complex(zeros(K,L,Nr,Nt,'single'));
-starts = [0 cumsum(double(ofdm.SymbolLengths(1:L-1)))];
-centers = starts+double(ofdm.CyclicPrefixLengths(1:L))+double(ofdm.Nfft)/2+offset;
-for path = 1:numel(rays.Delays)
+if nargout>1
+    starts = [0 cumsum(double(ofdm.SymbolLengths(1:L-1)))];
+    % nrOFDMDemodulate starts its FFT halfway through the CP by default.
+    starts = starts+floor(.5*double(ofdm.CyclicPrefixLengths(1:L)))+offset;
+    centers = starts+(double(ofdm.Nfft)-1)/2;
+    coefficients = complex(zeros(K,L,P,'single'));
+    spatial = complex(zeros(P,Nr*Nt,'single'));
+end
+for path = 1:P
     if norm(rays.Receive(:,path))==0
         continue
     end
@@ -36,10 +42,15 @@ for path = 1:numel(rays.Delays)
     frequency = channel.Doppler*rays.DopplerFactor(path);
     rotation = exp(1i*2*pi*frequency*(channel.InitialTime+(0:N-1).'/ofdm.SampleRate));
     output = output+(delayed.*rotation)*rays.Receive(:,path).';
-    spectrum = exp(-1i*2*pi*k*(integer+(0:16)-offset)/ofdm.Nfft)*kernel.';
-    phase = exp(1i*2*pi*frequency*(channel.InitialTime+centers/ofdm.SampleRate));
-    spatial = rays.Receive(:,path)*rays.Transmit(:,path)';
-    component = reshape(spectrum*phase,K,L,1,1).*reshape(spatial,1,1,Nr,Nt);
-    response = response+single(component);
+    if nargout>1
+        spectrum = exp(-1i*2*pi*k*(integer+(0:16)-offset)/ofdm.Nfft)*kernel.';
+        averageGain = sinc(frequency*double(ofdm.Nfft)/ofdm.SampleRate)/sinc(frequency/ofdm.SampleRate);
+        phase = averageGain*exp(1i*2*pi*frequency*(channel.InitialTime+centers/ofdm.SampleRate));
+        coefficients(:,:,path) = single(spectrum*phase);
+        spatial(path,:) = reshape(single(rays.Receive(:,path)*rays.Transmit(:,path)'),1,[]);
+    end
+end
+if nargout>1
+    response = reshape(reshape(coefficients,K*L,P)*spatial,K,L,Nr,Nt);
 end
 end

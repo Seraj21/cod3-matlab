@@ -1,0 +1,85 @@
+name: External FFT-window reference BER
+on:
+  push:
+    branches: [practical-hbf-receiver]
+    paths: [.github/workflows/external_fft_ber.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2025b
+          products: Communications_Toolbox 5G_Toolbox
+      - uses: matlab-actions/run-tests@v3
+        with:
+          source-folder: .
+          select-by-folder: tests
+  evaluate:
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    strategy:
+      fail-fast: false
+      matrix:
+        array: [32, 64]
+        batch: [0, 1, 2]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
+        with:
+          github-token: ${{ github.token }}
+          run-id: 41820206097
+          name: frozen-receiver-${{ matrix.array }}
+          path: models
+      - uses: actions/download-artifact@v7
+        with:
+          github-token: ${{ github.token }}
+          run-id: 41817163511
+          name: deepmimo-held-out-rays
+          path: external
+      - uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2025b
+          products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
+      - uses: matlab-actions/run-command@v3
+        with:
+          command: code1233_link(512,32,"results",${{ matrix.array }},[0:.5:10 11:20],85000+1000*${{ matrix.batch }},ModelFile="models/receiver_${{ matrix.array }}.mat",TestProfile="DeepMIMO",RayFile="external/deepmimo_i2_28b.mat",RayStart=1+32*${{ matrix.batch }});
+      - uses: actions/upload-artifact@v7
+        with:
+          name: deepmimo-ber-${{ matrix.array }}-batch-${{ matrix.batch }}
+          path: results/
+          if-no-files-found: error
+  diagnose:
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        array: [32, 64]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
+        with:
+          github-token: ${{ github.token }}
+          run-id: 41817163511
+          name: deepmimo-held-out-rays
+          path: external
+      - uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2025b
+          products: Communications_Toolbox 5G_Toolbox
+      - uses: matlab-actions/run-command@v3
+        with:
+          command: addpath('scripts'); diagnose_rf("external/deepmimo_i2_28b.mat","diagnostic",${{ matrix.array }});
+      - uses: actions/upload-artifact@v7
+        with:
+          name: rf-diagnostic-${{ matrix.array }}
+          path: diagnostic/
+          if-no-files-found: error

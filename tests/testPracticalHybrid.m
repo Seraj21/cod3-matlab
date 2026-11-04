@@ -147,3 +147,22 @@ effective = pagemtimes(permute(H,[3 4 1 2]),f);
 expected = layer.*reshape(permute(effective,[3 4 1 2]),144,12,3);
 verifyEqual(testCase,received,double(expected),'AbsTol',2e-6);
 end
+function testExternalDopplerReferenceMatchesFFTWindow(testCase)
+carrier = nrCarrierConfig('NSizeGrid',12,'SubcarrierSpacing',60,'CyclicPrefix','extended');
+ofdm = nrOFDMInfo(carrier);
+grid = complex(zeros(144,12));
+grid(73,:) = 1;
+tx = nrOFDMModulate(carrier,grid,'Windowing',0);
+rays = struct('Receive',1,'Transmit',1,'Delays',.37/ofdm.SampleRate,'DopplerFactor',1);
+channel = struct('Rays',rays,'InitialTime',.0012,'Doppler',3000);
+[rx,H,offset] = applyMIMOChannel(channel,[tx;zeros(100,1)],carrier);
+received = nrOFDMDemodulate(carrier,rx(offset+(1:size(tx,1)),:));
+verifyEqual(testCase,received(73,:),double(H(73,:)),'AbsTol',2e-6);
+starts = [0 cumsum(double(ofdm.SymbolLengths(1:11)))];
+oldCenters = starts+double(ofdm.CyclicPrefixLengths(1:12))+double(ofdm.Nfft)/2+offset;
+oldReference = exp(1i*2*pi*3000*(channel.InitialTime+oldCenters/ofdm.SampleRate));
+verifyGreaterThan(testCase,max(abs(received(73,:)-oldReference)),.02);
+% Omitting the response must preserve the exact time-domain channel output.
+rxOnly = applyMIMOChannel(channel,[tx;zeros(100,1)],carrier);
+verifyEqual(testCase,rxOnly,rx);
+end

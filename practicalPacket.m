@@ -35,7 +35,7 @@ for bank = 1:numel(banks)
         release(channel);
     end
     channel.InitialTime = (bank-1)*slotDuration;
-    [rx,~,~] = applyMIMOChannel(channel,[tx;zeros(tail,settings.ArraySize)],carrier);
+    rx = applyMIMOChannel(channel,[tx;zeros(tail,settings.ArraySize)],carrier);
     [rx,~,~] = radioImpairments(rx,settings,seed+300000+bank,false,channel.InitialTime);
     % Antenna noise is white. Equivalent noise after explicit RF whitening is white.
     rx = rx*conj(receiver);
