@@ -1,0 +1,37 @@
+name: Refine practical HBF BER transition
+on:
+  push:
+    branches: [practical-hbf-receiver]
+    paths: [.github/workflows/refine_hbf_ber.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  refine:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    strategy:
+      fail-fast: false
+      matrix:
+        array: [32, 64]
+        batch: [0, 1, 2, 3, 4, 5]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
+        with:
+          github-token: ${{ github.token }}
+          run-id: 41817018020
+          name: frozen-receiver-${{ matrix.array }}
+          path: models
+      - uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2025b
+          products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
+      - uses: matlab-actions/run-command@v3
+        with:
+          command: code1233_link(512,16,"results",${{ matrix.array }},[3:.5:10 11 12],150000+1000*${{ matrix.batch }},ModelFile="models/receiver_${{ matrix.array }}.mat");
+      - uses: actions/upload-artifact@v7
+        with:
+          name: refine-practical-hbf-${{ matrix.array }}-batch-${{ matrix.batch }}
+          path: results/
+          if-no-files-found: error
