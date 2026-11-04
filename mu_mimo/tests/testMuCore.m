@@ -99,3 +99,63 @@ end
 verifyEqual(testCase,nnz(any(abs(r.SRS)>0,3)),r.K*4);
 verifyFalse(testCase,any(r.DataMask(any(abs(r.ReferenceGrid)>0,3))));
 end
+function testJointCNNFrequencyPacking(testCase)
+for link = ["UL" "DL"]
+ cfg = muConfig(32,NumRB=12,Quiet=true,Speed=0);
+ r = muResources(cfg);
+ if link=="UL",layouts=r.UplinkLayout;R=8;groupSize=8;else,layouts=r.DownlinkLayout;R=16;groupSize=4;end
+ U = cfg.Users;
+ stream = RandStream('mt19937ar','Seed',811);
+ truth = complex(randn(stream,r.K,r.L,R,U),randn(stream,r.K,r.L,R,U));
+ samples = complex(zeros(size(truth)));
+ for u = 1:U
+  mask = repmat(layouts{u}.Mask,r.G,1,R);
+  temp = truth(:,:,:,u);temp(~mask)=0;samples(:,:,:,u)=temp;
+ end
+ stats = muPrior("init",layouts);
+ stats = muPrior("accumulate",stats,samples,truth,layouts);
+ models = muPrior("finalize",stats);
+ [~,variance,state] = muCE(samples,.1,layouts,models,r,"LS");
+ verifyGreaterThanOrEqual(testCase,min(variance,[],'all'),0);
+ [X,meta] = muCNNFeatures(state,layouts,r,groupSize);
+ target = muCNNTargets(truth,state.Scale,meta);
+ restored = muCNNRestore(double(target),meta,state.Scale);
+ verifyEqual(testCase,restored,truth,'AbsTol',5e-7);
+ net = muCNNArchitecture(size(X,3),meta.Coefficients);
+ correction = extractdata(predict(net,dlarray(X,'SSCB')));
+ verifyEqual(testCase,correction,zeros(size(correction),'single'));
+end
+end
+function testInterferenceAwareNoiselessReceiver(testCase)
+cfg = muConfig(32,NumRB=12,Quiet=true,Speed=0);
+r = muResources(cfg);
+front = muFrontEnd(32,8,.7,.3);
+stream = RandStream('mt19937ar','Seed',731);
+physical = complex(randn(stream,16,8),randn(stream,16,8));
+effective = zeros(4,8);
+for u = 1:4,effective(u,:)=sum(physical((u-1)*4+(1:4),:),1)/2;end
+[grid,payload] = muPayload(cfg,r,912);
+for scheme = ["MR" "ZF" "PZF"]
+ B = muPrecoder(effective,scheme,front,4,2);
+ h = repmat(reshape(physical*B,1,1,16,4),r.K,r.L,1,1);
+ y = sum(h.*reshape(grid,r.K,r.L,1,4),4);
+ input = struct('Observed',y,'Noise',1e-9*ones(1,16));
+ [errors,failed] = muDecode(input,h,zeros(size(h)),payload,cfg,r);
+ verifyEqual(testCase,errors,zeros(1,4));
+ verifyFalse(testCase,any(failed));
+end
+end
+function testPhysicalTDLControl(testCase)
+cfg = muConfig(32,NumRB=12,Quiet=true,Speed=0,DelaySpread=30e-9,SoundingSNR=50);
+r = muResources(cfg);
+scene = muSounding(cfg,r,19502);
+[grid,payload] = muPayload(cfg,r,19503);
+for scheme = ["MR" "ZF" "PZF"]
+ weights = muWeights(scene.ULTruth,scheme,scene,r);
+ packet = muDownlink(scene,r,grid,weights);
+ input = muReceive(packet,scene,r,50,true);
+ [errors,failed] = muDecode(input,input.Truth,zeros(size(input.Truth)),payload,scene.Config,r);
+ verifyEqual(testCase,errors,zeros(1,4));
+ verifyFalse(testCase,any(failed));
+end
+end

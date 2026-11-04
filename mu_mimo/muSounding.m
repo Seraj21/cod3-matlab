@@ -30,6 +30,9 @@ frequency = muCFO(noisy,offset,r.OFDM,cfg.UplinkSymbols);
 compensated = noisy.*exp(-1i*2*pi*frequency*(0:size(noisy,1)-1).'/cfg.SampleRate);
 observed = nrOFDMDemodulate(r.Carrier,compensated(offset+(1:r.Samples),:));
 samples = muPilotObservations(observed,r,"UL");
+clean = double(rx).*exp(-1i*2*pi*frequency*(0:size(rx,1)-1).'/cfg.SampleRate);
+clean = nrOFDMDemodulate(r.Carrier,clean(offset+(1:r.Samples),:));
+cleanSamples = muPilotObservations(clean,r,"UL");
 Hul = double(Hul(:,1:r.L,:,:)).*reshape(front.ChannelGain,1,1,cfg.RFChains,1);
 truth = complex(zeros(r.K,r.L,cfg.RFChains,cfg.Users));
 for u = 1:cfg.Users
@@ -41,7 +44,7 @@ swapTransmitAndReceive(channel);
 reset(channel);
 scene = struct('Config',cfg,'Front',front,'Channel',channel,'Tail',tail, ...
     'TrueOffset',double(trueOffset),'UplinkOffset',offset,'UplinkCFO',frequency, ...
-    'ULSamples',samples,'ULTruth',truth,'ULNoise',muGuardNoise(noisy,r,tail), ...
+    'ULSamples',samples,'ULCleanSamples',cleanSamples,'ULTruth',truth,'ULNoise',muGuardNoise(noisy,r,tail), ...
     'HDownlink',permute(Hul,[1 2 4 3]),'Seed',seed);
 noiseStream = RandStream('mt19937ar','Seed',seed+400000);
 scene.DataNoise = complex(randn(noiseStream,r.Samples+tail,cfg.Users*cfg.UERx), ...
