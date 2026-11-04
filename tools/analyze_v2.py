@@ -13,7 +13,12 @@ def main():
     parser.add_argument('--run-id',type=int,required=True)
     parser.add_argument('--source',required=True)
     args=parser.parse_args();root=args.artifacts;out=args.output;out.mkdir(parents=True,exist_ok=True)
-    fingerprints=set();allrows=[];paired=[];summary={'run_id':args.run_id,'source':args.source,'arrays':{}}
+    with zipfile.ZipFile(root/'v2-frozen-model.zip') as frozen:
+        names=[name for name in frozen.namelist() if name.endswith('v2_model_summary.json')]
+        assert len(names)==1
+        model=json.loads(frozen.read(names[0]))
+    fingerprints=set();allrows=[];paired=[]
+    summary={'run_id':args.run_id,'source':args.source,'model':model,'arrays':{}}
     raw=out/'raw';raw.mkdir(exist_ok=True)
     rng=np.random.default_rng(925117)
     weights=rng.multinomial(N*BATCHES,np.full(N*BATCHES,1/(N*BATCHES)),size=10000)/(N*BATCHES)
@@ -109,6 +114,12 @@ def main():
         for row in info['points']:
             if row['snr']!=20:continue
             b=row['BER'];text+=f"| {array} | {row['precoder']} | {b['LS']:.6g} | {b['LMMSE']:.6g} | {b['CNN']:.6g} | {b['Perfect CSI']:.6g} | {row['Goodput_Mbps']['CNN']:.6g} |\n"
+    text+='\n## معاملات CNN المجمدة\n\nالمعاملات التالية اختيرت على تحقق الحمولة المستقل، قبل الاختبار. المعامل صفر يلغي التصحيح في ذلك الطرف ويستعمل تقديرLMMSE. عندصفر في الطرفين يتطابق منحنىCNN معLMMSE عن قصد، وتبقى العلامات المختلفة ظاهرة. لا يُدّعى تحسن شبكة جرى إلغاء تصحيحها.\n\n'
+    text+='| Precoder | معامل المحطة من تحقق الحمولة | معامل المستقبل من تحقق الحمولة | معامل المستقبل من تحقق القناة |\n|---|---|---|---|\n'
+    for precoder in PRECODERS:
+        selection=model['Selection'][precoder]
+        text+=f"| {precoder} | {selection[0]:g} | {selection[1]:g} | {model['BlendRX'][precoder]:.6g} |\n"
+    text+=f"\nمعامل شبكة المحطة من تحقق القناة: {model['BlendTX']:.6g}. المعامل الفعلي هو حاصل ضرب معاملي تحقق القناة والحمولة.\n"
     text+='\nملف المقارنة الزوجية يعرض فروقCNN وLMMSE وفترات ثقة نقطية بإعادة أخذ العينات على إطار القناة كاملًا. تحجب الفترة عندما تختلف أقل من خمسة إطارات؛ لا تُفسر العلامات الصفرية كضمان لخطأ صفري.\n'
     text+=f'\nالمصدر المستخدم: https://github.com/Seraj21/cod3-matlab/tree/{args.source}\n\nالتشغيل: https://github.com/Seraj21/cod3-matlab/actions/runs/{args.run_id}\n'
     (out/'V2-Review.md').write_text(text,encoding='utf-8')
