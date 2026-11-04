@@ -1,0 +1,37 @@
+name: Practical receiver 512-QAM BER
+on:
+  workflow_dispatch:
+  push:
+    branches: [channel-estimator-realistic]
+    paths:
+      - code1233_link.m
+      - tests/testReceiverAssumptions.m
+      - .github/workflows/realistic_estimator_ber.yml
+permissions:
+  contents: read
+jobs:
+  simulate:
+    name: Practical ${{ matrix.array }}x${{ matrix.array }} 512-QAM
+    strategy:
+      fail-fast: false
+      matrix:
+        array: [32, 64]
+    runs-on: ubuntu-latest
+    timeout-minutes: 95
+    steps:
+      - uses: actions/checkout@v7
+      - uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2025b
+          products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
+      - uses: matlab-actions/run-tests@v3
+        with:
+          select-by-folder: tests
+      - uses: matlab-actions/run-command@v3
+        with:
+          command: checkcode('code1233_link.m','-id'); code1233_link(512,32,"results",${{ matrix.array }});
+      - uses: actions/upload-artifact@v7
+        with:
+          name: realistic-ber-${{ matrix.array }}x${{ matrix.array }}
+          path: results/
+          if-no-files-found: error
