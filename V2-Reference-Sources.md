@@ -1,0 +1,9 @@
+# Independent reference checks
+
+- NVIDIA Sionna, `mimo/equalization`: gain-normalized LMMSE symbols and effective variance, https://nvlabs.github.io/sionna/_modules/sionna/phy/mimo/equalization.html . The contract compares the receiver covariance expression with a separate whitened solve and the reference variance identity. Sionna itself is not a runtime dependency of this MATLAB project.
+- Bjornson, Hoydis and Sanguinetti, *Massive MIMO Networks*, authors' MATLAB package: https://github.com/emilbjornson/massivemimobook . Reviewed `functionComputeSE_DL_hardening.m` for MR/ZF column normalization and `functionChannelEstimates.m` for channel-error covariance. These are algorithm references; their spectral-efficiency numbers are not directly comparable with this waveform simulation's coded goodput.
+- MathWorks MU-MIMO reciprocity example: https://www.mathworks.com/help/5g/ug/tdd-reciprocity-based-pdsch-beamforming-using-srs.html . Reviewed SRS-to-DL CSI, user/stream dimensions and CRC-based throughput accounting. Its numerology, channel and modulation differ from this experiment.
+- MathWorks `qammod`: https://www.mathworks.com/help/comm/ref/qammod.html . MATLAB's 512-QAM is cross-QAM. `v2_reference_checks` enumerates all 512 actual constellation points and their nine-bit labels, and compares native approximate LLRs with independent exhaustive distance metrics. No square- or rectangular-QAM BER formula is assumed.
+- MathWorks `nrRateMatchLDPC`: https://www.mathworks.com/help/5g/ref/nrratematchldpc.html . Eight bit-exact comparisons cover Qm=2/4/6/8, both one and multiple code blocks. Qm=9 remains the documented experimental extension. A separate AWGN/512-QAM/LDPC control checks the coding path before adding MIMO, channel aging, ICI and RF impairments.
+
+Reference checks complement the independent-seed waveform tests; they do not establish field performance or guarantee a CNN gain.
