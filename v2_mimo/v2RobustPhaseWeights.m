@@ -13,6 +13,8 @@ eta=reshape(v,1,1,[])+10^(-20/10);
 if nargin<5,baseline=v2Weights(h,"PZF",scene,r);end
 old=mean(reshape(double(baseline(:,:,:,times)),cfg.RFChains,cfg.Users,W,G,numel(times)),3);
 old=reshape(old,cfg.RFChains,cfg.Users,P);
+% Exported baseline weights are single: restore the exact double phase lattice.
+old=amplitude*exp(1i*step*round(angle(old)/step));
 gram=pagemtimes(H,'none',H,'ctranspose');
 Z=pagemtimes(H,'ctranspose',pagemldivide(gram,repmat(eye(cfg.Users),1,1,P)),'none');
 starts={old,amplitude*exp(1i*step*round(angle(Z)/step)), ...

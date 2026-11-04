@@ -49,6 +49,12 @@ def main():
     parser.add_argument('--artifact-prefix',default='v2-evaluation')
     parser.add_argument('--archive-name',default='MU-V2-Corrected-CNN-Results.zip')
     args=parser.parse_args();root=args.artifacts;out=args.output;out.mkdir(parents=True,exist_ok=True)
+    catalog=json.loads((root/'GitHub-artifact-catalog.json').read_text())
+    by_name={item['name']+'.zip':item for item in catalog}
+    for path in root.glob('*.zip'):
+        assert path.name in by_name, ('No source artifact metadata',path.name)
+        assert hashlib.sha256(path.read_bytes()).hexdigest()==by_name[path.name]['sha256'], ('Source artifact digest mismatch',path.name)
+    shutil.copy2(root/'GitHub-artifact-catalog.json',out/'GitHub-artifact-catalog.json')
     A=8*int(args.rate*23760/8);CAP=U*A/T/1e6
     raw_audit.A=A;raw_audit.CAP=CAP
     rate_label={.5:'1/2',.25:'1/4',.125:'1/8'}[args.rate]
@@ -56,6 +62,11 @@ def main():
         names=[name for name in frozen.namelist() if name.endswith('v2_model_summary.json')]
         assert len(names)==1
         model=json.loads(frozen.read(names[0]))
+        smoke=[n for n in frozen.namelist() if n.endswith('mu_results.mat')]
+        assert len(smoke)==2
+        reference_fingerprints={raw_audit.fingerprint(loadmat(io.BytesIO(frozen.read(n)),variable_names=['cnnFingerprint'])['cnnFingerprint']) for n in smoke}
+        assert len(reference_fingerprints)==1
+        reference_fingerprint=reference_fingerprints.pop()
     fingerprints=set();allrows=[];paired=[]
     summary={'run_id':args.run_id,'source':args.source,'model':model,'target_code_rate':args.rate,
              'payload_bits_per_user':A,'maximum_goodput_Mbps':CAP,'arrays':{},
@@ -114,13 +125,13 @@ def main():
             for kind,values in [('BER',ber[:,p,:]),('Goodput',gp[:,p,:])]:
                 figure_for_series(SNRS,values,array,precoder,kind,bits,len(e),CAP,
                     out/f'V2-{precoder}-{kind}-BS{array}.png',
-                    measured_label=f'Independent frozen-model simulation | LDPC target rate {rate_label}')
+                    measured_label=f'Independent frozen-model simulation | LDPC target rate {rate_label}\nCNN curve: selected LMMSE at BS + learned CNN at UE')
         summary['arrays'][str(array)]={'frames':len(e),'payload_bits_per_point':bits,'points':points,
             'CNN_BER_better':int(np.count_nonzero(ber[:,:,2]<ber[:,:,1])),
             'CNN_BER_worse':int(np.count_nonzero(ber[:,:,2]>ber[:,:,1])),
             'CNN_BER_equal':int(np.count_nonzero(ber[:,:,2]==ber[:,:,1])),
             'CNN_Goodput_better':int(np.count_nonzero(gp[:,:,2]>gp[:,:,1]))}
-    assert len(fingerprints)==1,'The frozen networks differ between evaluation jobs'
+    assert fingerprints=={reference_fingerprint},'Evaluation network weights differ from the frozen model smoke tests'
     summary['network_fingerprint']=fingerprints.pop()
     audit=audit_rows(allrows,SNRS);summary['plot_audit']=audit
     writecsv(out/'V2-all-metrics.csv',allrows,FIELDS)
@@ -143,7 +154,8 @@ def main():
         source=Path(__file__).resolve().parent.parent/name
         if source.exists():shutil.copy2(source,out/name)
     summary['artifacts']=manifest
-    summary['checks']=['All 16 ZIP archives passed CRC validation',
+    summary['checks']=['All local artifact SHA256 hashes match independently retrieved GitHub artifact metadata',
+        'All 16 ZIP archives passed CRC validation',
         'Every CSV/MAT BER and goodput reproduced from individual user payload errors and CRC flags',
         'Every per-user CSV error and CRC flag agrees with the full MAT tensor',
         'Every MAT configuration, independent test seed, coding rate and precoder power matches the declared experiment',

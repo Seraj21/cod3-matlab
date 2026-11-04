@@ -69,9 +69,12 @@ def read_batch(path,array):
     close(mat["success"],correct);close(mat["goodput"],correct*A/(N*T)/1e6)
     close(mat["maximumGoodput"].item(),CAP)
     assert len(metric)==len(SNRS)*3*4
+    seen_metrics=set()
     for row in metric:
         ix=(int(np.flatnonzero(SNRS==float(row["SNR_dB"]))[0]),
             PRECODERS.index(row["Precoder"]),ESTIMATORS.index(row["Estimator"]))
+        assert ix not in seen_metrics, ("Duplicate aggregate CSV measurement",ix)
+        seen_metrics.add(ix)
         assert int(row["BSAntennas"])==array
         assert int(row["PayloadBits"])==bits
         assert int(row["PayloadBitErrors"])==errors[ix]

@@ -34,7 +34,7 @@ jobs:
           products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
       - uses: matlab-actions/run-command@v3
         with:
-          command: v2_phase_diagnostics(${{ matrix.antennas }});
+          command: results=runtests('v2_mimo/tests/testV2RobustPhase.m');assertSuccess(results);v2_phase_diagnostics(${{ matrix.antennas }});
       - uses: actions/upload-artifact@v7
         if: always()
         with:
