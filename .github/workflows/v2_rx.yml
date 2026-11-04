@@ -1,0 +1,46 @@
+name: V2 independent receiver CNNs
+on:
+  push:
+    branches: [mu-cnn-v2]
+    paths: [.github/workflows/v2_rx.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  train:
+    strategy:
+      fail-fast: false
+      matrix:
+        scheme: [MR, ZF, PZF]
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v7
+      - name: Wait for the frozen transmitter model
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run watch 41905811099 --exit-status --interval 60
+      - uses: actions/download-artifact@v8
+        with:
+          name: v2-transmitter-model
+          run-id: 41905811099
+          github-token: ${{ github.token }}
+          path: v2_tx_training
+      - uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2025b
+          products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
+      - name: Verify a complete receiver training cycle
+        uses: matlab-actions/run-command@v3
+        with:
+          command: addpath('mu_mimo','v2_mimo'); v2TrainRX('${{ matrix.scheme }}','v2_tx_training/v2_tx.mat','v2_rx_smoke',2,6);
+      - name: Train a separate CNN on independent physical channels
+        uses: matlab-actions/run-command@v3
+        with:
+          command: v2_train_rx('${{ matrix.scheme }}');
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: v2-receiver-${{ matrix.scheme }}
+          path: v2_rx_*/
+          if-no-files-found: warn
