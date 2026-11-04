@@ -1,11 +1,41 @@
 #!/usr/bin/env python3
 """Audit all raw MATLAB counts and display every measured estimator curve."""
 import argparse,csv,hashlib,json,shutil,zipfile
+import io
 from pathlib import Path
 import numpy as np
+from scipy.io import loadmat
 import analyze_mu as raw_audit
 from analyze_mu import read_batch,writecsv,SNRS,PRECODERS,ESTIMATORS,A,T,U,N,BATCHES,CAP,FIELDS
 from mu_plotting import figure_for_series,audit_rows
+
+def audit_configuration(path,array,batch,rate,model,e,f):
+    with zipfile.ZipFile(path) as archive:
+        members=[n for n in archive.namelist() if Path(n).name=='mu_results.mat']
+        assert len(members)==1
+        result=loadmat(io.BytesIO(archive.read(members[0])),variable_names=['result'],simplify_cells=True)['result']
+    expected={'Antennas':array,'RFChains':8,'Users':4,'UERx':4,'NumRB':66,'M':512,'Qm':9,
+        'Rate':rate,'Speed':120,'DelaySpread':1e-6,'CarrierFrequency':28e9,
+        'SoundingSNR':15,'BeamWidth':1,'CPFraction':.75,'PhaseBits':4,
+        'VerticalCorrelation':.7,'HorizontalCorrelation':.3,'UECorrelation':.25,
+        'SubcarrierSpacing':60,'InputBackoff':10,'AMPMDegrees':3,'FrequencyOffset':2800,
+        'DecoderDual':True,'AlignPhase':True}
+    for key,value in expected.items():
+        assert result['Config'][key]==value,(path.name,key,result['Config'][key],value)
+    assert result['NumPackets']==N and result['PayloadBits']==A and result['CodedBits']==23760
+    assert abs(result['FrameDuration']-T)<1e-15
+    seedbase=20000000 if rate==.5 else 30000000
+    assert result['SeedOffset']==seedbase+batch*100000
+    np.testing.assert_array_equal(result['Config']['UplinkSymbols'],[1,2,3,4])
+    np.testing.assert_array_equal(result['Config']['DownlinkSymbols'],np.arange(6,13))
+    np.testing.assert_array_equal(result['Config']['PhaseNoiseLevel'],[-85,-100,-115])
+    np.testing.assert_array_equal(result['Config']['PhaseNoiseOffset'],[1e4,1e5,1e6])
+    np.testing.assert_array_equal(result['SNR'],SNRS)
+    np.testing.assert_array_equal(result['SlotErrors'],e)
+    np.testing.assert_array_equal(result['CRCFailed'],f)
+    assert np.max(result['PowerError'])<1e-8
+    for precoder in PRECODERS:
+        np.testing.assert_array_equal(result['ModelSelection'][precoder],model['Selection'][precoder])
 
 def main():
     global A,CAP
@@ -36,6 +66,7 @@ def main():
         for batch in range(BATCHES):
             path=root/f'{args.artifact_prefix}-{array}-{batch}.zip'
             e,f,digest=read_batch(path,array);es.append(e);fs.append(f);fingerprints.add(digest)
+            audit_configuration(path,array,batch,args.rate,model,e,f)
             shutil.copy2(path,raw/path.name)
         e=np.concatenate(es);f=np.concatenate(fs)
         errors=e.sum(axis=(0,4));bits=len(e)*U*A
@@ -92,9 +123,14 @@ def main():
                         target=out/'training'/path.stem/member
                         target.parent.mkdir(parents=True,exist_ok=True)
                         target.write_bytes(archive.read(member))
+    for name in ['V2-Reference-Sources.md','V2-Method-Review.md']:
+        source=Path(__file__).resolve().parent.parent/name
+        if source.exists():shutil.copy2(source,out/name)
     summary['artifacts']=manifest
     summary['checks']=['All 16 ZIP archives passed CRC validation',
         'Every CSV/MAT BER and goodput reproduced from individual user payload errors and CRC flags',
+        'Every per-user CSV error and CRC flag agrees with the full MAT tensor',
+        'Every MAT configuration, independent test seed, coding rate and precoder power matches the declared experiment',
         '31 SNR values for each of 24 estimator curves, with no missing or duplicate measurement',
         'Four identical frozen CNN weight sets in all 16 jobs',
         'No BER smoothing, sorting, forced monotonicity or substituted zero measurements']
