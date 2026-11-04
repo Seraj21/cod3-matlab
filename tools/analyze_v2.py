@@ -44,6 +44,7 @@ def main():
     parser.add_argument('--output',type=Path,required=True)
     parser.add_argument('--run-id',type=int,required=True)
     parser.add_argument('--source',required=True)
+    parser.add_argument('--recovery-run-id',type=int)
     parser.add_argument('--rate',type=float,default=.5,choices=[.5,.25,.125])
     parser.add_argument('--artifact-prefix',default='v2-evaluation')
     parser.add_argument('--archive-name',default='MU-V2-Corrected-CNN-Results.zip')
@@ -57,7 +58,8 @@ def main():
         model=json.loads(frozen.read(names[0]))
     fingerprints=set();allrows=[];paired=[]
     summary={'run_id':args.run_id,'source':args.source,'model':model,'target_code_rate':args.rate,
-             'payload_bits_per_user':A,'maximum_goodput_Mbps':CAP,'arrays':{}}
+             'payload_bits_per_user':A,'maximum_goodput_Mbps':CAP,'arrays':{},
+             'recovery_run_id':args.recovery_run_id,'batch_provenance':[]}
     raw=out/'raw';raw.mkdir(exist_ok=True)
     rng=np.random.default_rng(925117)
     weights=rng.multinomial(N*BATCHES,np.full(N*BATCHES,1/(N*BATCHES)),size=10000)/(N*BATCHES)
@@ -67,6 +69,20 @@ def main():
             path=root/f'{args.artifact_prefix}-{array}-{batch}.zip'
             e,f,digest=read_batch(path,array);es.append(e);fs.append(f);fingerprints.add(digest)
             audit_configuration(path,array,batch,args.rate,model,e,f)
+            with zipfile.ZipFile(path) as sourcezip:
+                member=next(n for n in sourcezip.namelist() if Path(n).name=='mu_results.mat')
+                metadata=loadmat(io.BytesIO(sourcezip.read(member)),variable_names=['result'],simplify_cells=True)['result']
+            recovered='Recovery' in metadata
+            if recovered:
+                assert args.rate==.5 and args.recovery_run_id
+                assert (array,batch) in [(32,2),(32,3),(32,4),(32,5),(32,6),(64,1),(64,2),(64,5),(64,6)]
+                np.testing.assert_array_equal(metadata['Recovery']['PartFrames'],[8,8])
+                np.testing.assert_array_equal(metadata['Recovery']['PartSeedOffsets'],[20000000+batch*100000,20000008+batch*100000])
+                assert metadata['Recovery']['OriginalSource']==args.source
+            summary['batch_provenance'].append({'BSAntennas':array,'batch':batch,'frames':N,
+                'run_id':args.recovery_run_id if recovered else args.run_id,
+                'recovered_from_exact_seed_subdivisions':recovered,
+                'artifact_sha256':hashlib.sha256(path.read_bytes()).hexdigest()})
             shutil.copy2(path,raw/path.name)
         e=np.concatenate(es);f=np.concatenate(fs)
         errors=e.sum(axis=(0,4));bits=len(e)*U*A
@@ -173,6 +189,9 @@ def main():
         text+=f"| {precoder} | {selection[0]:g} | {selection[1]:g} | {model['BlendRX'][precoder]:.6g} |\n"
     text+=f"\nمعامل شبكة المحطة من تحقق القناة: {model['BlendTX']:.6g}. المعامل الفعلي هو حاصل ضرب معاملي تحقق القناة والحمولة.\n"
     text+='\nملف المقارنة الزوجية يعرض فروقCNN وLMMSE وفترات ثقة نقطية بإعادة أخذ العينات على إطار القناة كاملًا. تحجب الفترة عندما تختلف أقل من خمسة إطارات؛ لا تُفسر العلامات الصفرية كضمان لخطأ صفري.\n'
+    if args.recovery_run_id:
+        text+='\nتوقفت تسع دفعات أصلية عند حد الخادم90دقيقة؛ أُعيدت كل دفعة إلى جزأين من8أطر باستخدام المصدر الأصلي نفسه، والبذور نفسها، والأوزان المجمدة نفسها. أعيد تجميعها في ترتيب الأطر الأصلي مع التحقق من بصمات الشبكات. يحددV2-summary.json مصدر كل دفعة؛ لا يُحذف إطار متعثر ولا يعامل كقياس صفري.\n'
+        text+=f'\nتشغيل استكمال الدفعات: https://github.com/Seraj21/cod3-matlab/actions/runs/{args.recovery_run_id}\n'
     text+=f'\nالمصدر المستخدم: https://github.com/Seraj21/cod3-matlab/tree/{args.source}\n\nالتشغيل: https://github.com/Seraj21/cod3-matlab/actions/runs/{args.run_id}\n'
     (out/'V2-Review.md').write_text(text,encoding='utf-8')
     archive=out.parent/args.archive_name
