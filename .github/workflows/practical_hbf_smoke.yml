@@ -1,0 +1,39 @@
+name: Audit practical hybrid receiver
+on:
+  push:
+    branches: [practical-hbf-receiver]
+    paths:
+      - ExperimentalLDPC.m
+      - hybridPrecoder.m
+      - hybridCodebook.m
+      - tests/testPracticalHybrid.m
+      - .github/workflows/practical_hbf_smoke.yml
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2025b
+          products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
+      - uses: matlab-actions/run-tests@v3
+        with:
+          select-by-folder: tests
+  catalog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - run: pip install deepmimo scipy
+      - name: Inspect external channel scenarios
+        run: |
+          python - <<'PY'
+          import deepmimo as dm, json
+          print(dm.search({'bands':['mmW'],'numRx':{'min':64,'max':5000}}))
+          PY
