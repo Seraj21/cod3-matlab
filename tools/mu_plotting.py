@@ -27,9 +27,11 @@ def figure_for_series(x, values, array, precoder, kind, payload_bits, frames,
                 linestyle=STYLES[method], linewidth=2, zorder=2+method)
         # Disjoint marker locations expose all four series even when lines coincide.
         locations = np.arange(method, len(x), 4)
+        if kind == "BER":
+            locations = locations[values[locations, method] > 0]
         ax.scatter(x[locations], shown[locations, method], s=45,
-                   marker=MARKERS[method], facecolors="white",
-                   edgecolors=COLORS[method], linewidths=1.6,
+                   marker=MARKERS[method], facecolors=COLORS[method],
+                   edgecolors="white", linewidths=.6,
                    zorder=10+method, clip_on=False)
         zero = (values[:, method] == 0) if kind == "BER" else np.zeros(len(x), bool)
         if np.any(zero):
