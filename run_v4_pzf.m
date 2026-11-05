@@ -1,4 +1,4 @@
-function run_v4_pzf(antennas,frames,folder,snrDb,seedOffset,modelFile,modes,methods,matchedFile,alignedFile,scheme)
+function run_v4_pzf(antennas,frames,folder,snrDb,seedOffset,modelFile,modes,methods,matchedFile,alignedFile,scheme,numRB)
 % Paired measurement with a common waveform for receiver-only estimators.
 addpath(pwd,'mu_mimo','v2_mimo');
 if nargin<4,snrDb=[0:.5:10 11:20];end
@@ -9,6 +9,7 @@ if nargin<8,methods=["LS" "LMMSE" "V3 CNN" "Perfect CSI"];end
 if nargin<9,matchedFile="";end
 if nargin<10,alignedFile="";end
 if nargin<11,scheme="PZF";end
+if nargin<12,numRB=66;end
 scheme=string(scheme);
 assert(isscalar(scheme) && ismember(scheme,["MR" "ZF" "PZF"]));
 modes=string(modes);methods=string(methods);
@@ -26,7 +27,7 @@ end
 if any(ismember(methods,["Aligned CNN" "Aligned LMMSE"]))
  aligned=loadReceiver(alignedFile,model,true,scheme);
 end
-cfg=v3Config(antennas);r=v3Resources(cfg);
+cfg=v3Config(antennas,numRB);r=v3Resources(cfg);
 needTruth=any(methods=="Perfect CSIR");
 rows=cell(frames*numel(snrDb)*numel(methods)*numel(modes)*cfg.Users,14);at=0;
 for frame=1:frames
@@ -103,7 +104,7 @@ for frame=1:frames
 end
 assert(at==size(rows,1));
 settings=struct('FrameDuration',r.FrameDuration,'CodeRate',cfg.Rate,'CodedBits',r.CodedBits, ...
- 'PayloadBits',r.PayloadBits,'SeedOffset',seedOffset,'SNR_dB',snrDb,'FrameCount',frames,'Config',cfg,'Precoder',scheme);
+ 'PayloadBits',r.PayloadBits,'SeedOffset',seedOffset,'SNR_dB',snrDb,'FrameCount',frames,'Config',cfg,'Precoder',char(scheme));
 save(fullfile(folder,'pzf_settings.mat'),'settings');
 end
 function receiver=loadReceiver(file,model,projection,scheme)

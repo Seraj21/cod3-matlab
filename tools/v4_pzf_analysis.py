@@ -26,7 +26,7 @@ PAYLOAD_BITS = 2968
 KEYS = ["BS", "ChannelSeed", "SNR_dB", "Estimator", "UE"]
 
 
-def load_rows(root, keys=KEYS):
+def load_rows(root, keys=KEYS, payload_bits=PAYLOAD_BITS, max_iterations=100):
     files = sorted(Path(root).rglob("pzf_slots.csv"))
     assert files, f"No measurements in {root}"
     rows = pd.concat(
@@ -41,10 +41,10 @@ def load_rows(root, keys=KEYS):
     rows["Correct"] = (~rows.CRCFailed) & (rows.Errors == 0)
     rows["BaselineCorrect"] = (~rows.BaselineCRCFailed) & (rows.BaselineErrors == 0)
     rows["Undetected"] = (~rows.CRCFailed) & (rows.Errors != 0)
-    assert rows.PayloadBits.eq(PAYLOAD_BITS).all()
-    assert rows.Errors.between(0, PAYLOAD_BITS).all()
-    assert rows.BaselineErrors.between(0, PAYLOAD_BITS).all()
-    assert rows.ExtraIterations.between(0, 100).all()
+    assert rows.PayloadBits.eq(payload_bits).all()
+    assert rows.Errors.between(0, payload_bits).all()
+    assert rows.BaselineErrors.between(0, payload_bits).all()
+    assert rows.ExtraIterations.between(0, max_iterations).all()
     assert not rows.duplicated(keys + ["Retry"]).any()
     unchanged = (~rows.BaselineCRCFailed) | (rows.Retry == "None") | (
         rows.Estimator == "Perfect CSI"
@@ -139,7 +139,7 @@ def replay(new_root, old_root):
     print(f"Exact V3 replay: {len(rows)} user-block measurements match.")
 
 
-def aggregate(rows):
+def aggregate(rows, payload_bits=PAYLOAD_BITS):
     groups = rows.groupby(["BS", "Estimator", "Retry", "SNR_dB"], sort=True)
     table = groups.agg(
         PayloadBits=("PayloadBits", "sum"), PayloadBitErrors=("Errors", "sum"),
@@ -149,7 +149,7 @@ def aggregate(rows):
         Retries=("ExtraIterations", lambda value: int(value.gt(0).sum())),
     ).reset_index()
     table["PostLDPC_BER"] = table.PayloadBitErrors / table.PayloadBits
-    table["Goodput_Mbps"] = table.CorrectTransportBlocks * PAYLOAD_BITS / (
+    table["Goodput_Mbps"] = table.CorrectTransportBlocks * payload_bits / (
         table.Frames * SLOT_SECONDS * 1e6
     )
     return table

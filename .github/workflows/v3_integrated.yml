@@ -1,4 +1,4 @@
-name: Integrated V3 BER and throughput for MR ZF PZF
+name: Integrated V3 200 MHz BER and throughput for ZF PZF MR
 on:
   push:
     branches: [mu-cnn-v2]
@@ -7,17 +7,9 @@ permissions:
   contents: read
   actions: read
 jobs:
-  training-ready:
-    runs-on: ubuntu-latest
-    timeout-minutes: 140
-    steps:
-      - name: Wait for both deployment-matched networks
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh run watch 42018082199 --repo "$GITHUB_REPOSITORY" --exit-status --interval 45
   smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
@@ -32,17 +24,17 @@ jobs:
           products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
       - uses: matlab-actions/run-command@v3
         with:
-          command: addpath('mu_mimo','v2_mimo');v4ReceiverSelfTest;for p=["MR" "ZF" "PZF"],o=struct('Precoder',p,'RetryModes',["APP50" "CSI-APP50"],'Methods',["LS on common packet" "Perfect CSIR"],'AlignedModel',"");run_v3_mimo(32,1,fullfile('smoke',p),[0 20],78000000,'v3_refined/v3_model.mat',[],o);end
+          command: addpath('mu_mimo','v2_mimo');v4ReceiverSelfTest;r=v3Resources(v3Config(32,264));assert(r.CodedBits==95040 && r.PayloadBits==11880 && r.FrameDuration==.00025);p=int8(mod((1:r.PayloadBits).',2));c=r.Codec.encode(p);[q,bad]=r.Codec.decode(16*(1-2*double(c)),50,'Layered belief propagation');assert(~bad && isequal(p,q));for s=["ZF" "PZF" "MR"],o=struct('Precoder',s,'RetryModes',["APP50" "CSI-APP50"],'Methods',["LS on common packet" "Perfect CSIR"],'AlignedModel',"",'NumRB',264);run_v3_mimo(32,1,fullfile('smoke',s),[0 20],83000000,'v3_refined/v3_model.mat',[],o);end
   validation:
-    needs: [training-ready, smoke]
+    needs: smoke
     strategy:
       fail-fast: false
       matrix:
-        precoder: [MR, ZF, PZF]
+        precoder: [ZF, PZF, MR]
         antennas: [32, 64]
         batch: [0, 1, 2, 3]
     runs-on: ubuntu-latest
-    timeout-minutes: 50
+    timeout-minutes: 80
     steps:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
@@ -71,7 +63,7 @@ jobs:
           products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
       - uses: matlab-actions/run-command@v3
         with:
-          command: run_v3_integrated("${{ matrix.precoder }}",${{ matrix.antennas }},${{ matrix.batch }},"validation");
+          command: run_v3_integrated("${{ matrix.precoder }}",${{ matrix.antennas }},${{ matrix.batch }},"validation",264);
       - uses: actions/upload-artifact@v7
         with:
           name: integrated-validation-${{ matrix.precoder }}-${{ matrix.antennas }}-${{ matrix.batch }}
@@ -91,7 +83,7 @@ jobs:
           python-version: '3.12'
       - run: |
           python -m pip install numpy pandas matplotlib scipy
-          python tools/v3_integrated_analysis.py freeze validation integrated_selection/selection.json
+          python tools/v3_integrated_analysis.py freeze validation integrated_selection/selection.json --rb 264
       - uses: actions/upload-artifact@v7
         with:
           name: integrated-selection
@@ -102,11 +94,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        precoder: [MR, ZF, PZF]
+        precoder: [ZF, PZF, MR]
         antennas: [32, 64]
         batch: [0, 1, 2, 3, 4, 5, 6, 7]
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
@@ -139,7 +131,7 @@ jobs:
           products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
       - uses: matlab-actions/run-command@v3
         with:
-          command: run_v3_integrated("${{ matrix.precoder }}",${{ matrix.antennas }},${{ matrix.batch }},"test");
+          command: run_v3_integrated("${{ matrix.precoder }}",${{ matrix.antennas }},${{ matrix.batch }},"test",264);
       - uses: actions/upload-artifact@v7
         with:
           name: integrated-test-${{ matrix.precoder }}-${{ matrix.antennas }}-${{ matrix.batch }}
@@ -163,7 +155,7 @@ jobs:
           python-version: '3.12'
       - run: |
           python -m pip install numpy pandas matplotlib scipy
-          python tools/v3_integrated_analysis.py review integrated_tests integrated_selection/selection.json integrated_review
+          python tools/v3_integrated_analysis.py review integrated_tests integrated_selection/selection.json integrated_review --rb 264
       - uses: actions/upload-artifact@v7
         with:
           name: V3-Integrated-Results

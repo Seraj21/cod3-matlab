@@ -7,8 +7,9 @@ if nargin<6
 end
 if nargin<7,methodIndices=1:4;end
 if nargin>=8 && ~isempty(receiverOptions)
+ numRB=66;if isfield(receiverOptions,'NumRB'),numRB=receiverOptions.NumRB;end
  run_v4_pzf(antennas,frames,folder,snrDb,seedOffset,modelFile, ...
-  receiverOptions.RetryModes,receiverOptions.Methods,"",receiverOptions.AlignedModel,receiverOptions.Precoder);
+  receiverOptions.RetryModes,receiverOptions.Methods,"",receiverOptions.AlignedModel,receiverOptions.Precoder,numRB);
  return
 end
 addpath(pwd,'mu_mimo','v2_mimo');load(modelFile,'model');assert(model.Version==6);
