@@ -1,0 +1,281 @@
+{
+  "run_id": 41946464299,
+  "source": "a0583f0cd2347a9e0a93bfbc873a6ce623648fb6",
+  "network_fingerprint": "a6b7af7916040236c31589e4bd69a2abd30c70c09c60b0178a9c01526485c1fb",
+  "payload_bits_per_user": 2968,
+  "maximum_goodput_Mbps": 47.488,
+  "frames_per_batch": 4,
+  "batches_per_array": 8,
+  "model": {
+    "Version": 6,
+    "BlendTX": 1,
+    "Selection": {
+      "MR": [
+        0,
+        1
+      ],
+      "ZF": [
+        0,
+        1
+      ],
+      "PZF": [
+        0,
+        1
+      ]
+    },
+    "TrainingChannelsTX": 1920,
+    "ValidationChannelsTX": 240,
+    "TrainingChannelsRX": {
+      "MR": 640,
+      "ZF": 640,
+      "PZF": 640
+    },
+    "ValidationChannelsRX": {
+      "MR": 80,
+      "ZF": 80,
+      "PZF": 80
+    },
+    "BlendRX": {
+      "MR": 0.9122944405830806,
+      "ZF": 0.9253256516252267,
+      "PZF": 0.8908638936976808
+    },
+    "PilotMode": "DMRS+PTRS",
+    "ReferencesPerLocalChannel": 22,
+    "TargetCodeRate": 0.125,
+    "PZFMode": "robust SLNR, quantized desired-phase anchor",
+    "AttentionGatesPerReceiver": 2,
+    "LSInterpolation": {
+      "MR": "tensor DMRS",
+      "ZF": "tensor plus PTRS innovation",
+      "PZF": "tensor plus PTRS innovation"
+    },
+    "LSReferencesUsed": {
+      "MR": 18,
+      "ZF": 22,
+      "PZF": 22
+    },
+    "LSChannelCalibrationFramesPerPrecoder": 80,
+    "LSPayloadValidationFrames": 8,
+    "LSValidation": {
+      "FramesPerArray": 4,
+      "SNR": [
+        0,
+        4,
+        8,
+        12,
+        16,
+        20
+      ],
+      "Candidates": [
+        "tensor DMRS",
+        "tensor plus PTRS innovation",
+        "triangular full pilots"
+      ],
+      "Counts": [
+        [
+          [
+            186740,
+            569856,
+            0
+          ],
+          [
+            178590,
+            569856,
+            4
+          ],
+          [
+            192969,
+            569856,
+            0
+          ]
+        ],
+        [
+          [
+            186782,
+            569856,
+            0
+          ],
+          [
+            175883,
+            569856,
+            5
+          ],
+          [
+            192207,
+            569856,
+            0
+          ]
+        ],
+        [
+          [
+            191195,
+            569856,
+            0
+          ],
+          [
+            183595,
+            569856,
+            1
+          ],
+          [
+            196260,
+            569856,
+            0
+          ]
+        ]
+      ],
+      "SeedBase": 19000000,
+      "SelectionRule": "minimum mean payload BER, then correct blocks, then earlier declared operator"
+    },
+    "OriginalFrozenRun": 41943264421,
+    "CNNFeatureInterpolation": "triangular full pilots, unchanged from matched training"
+  },
+  "checks": [
+    "All local artifact SHA256 hashes match independently retrieved GitHub artifact metadata",
+    "All 16 evaluation ZIP archives passed CRC validation",
+    "Every CSV/MAT BER and goodput reproduced from individual user payload errors and CRC flags",
+    "Every per-user CSV error and CRC flag agrees with the full MAT tensor",
+    "Every MAT configuration, independent test seed, coding rate and precoder power matches the declared experiment",
+    "31 SNR values for each of 24 estimator curves, with no missing or duplicate measurement",
+    "Four identical frozen CNN weight sets in all 16 batches",
+    "No BER smoothing, sorting, forced monotonicity or substituted zero measurements"
+  ],
+  "arrays": {
+    "32": {
+      "frames": 32,
+      "payload_bits_per_point": 379904,
+      "CNN_BER_better": 89,
+      "CNN_BER_worse": 4,
+      "CNN_BER_equal": 0,
+      "CNN_Goodput_better": 59,
+      "points20": [
+        {
+          "precoder": "MR",
+          "snr": 20,
+          "BER": {
+            "LS": 0.2973777585916442,
+            "LMMSE": 0.09001221361185983,
+            "CNN": 0.04676444575471698,
+            "Perfect CSI": 0
+          },
+          "Goodput_Mbps": {
+            "LS": 0,
+            "LMMSE": 23.002,
+            "CNN": 34.503,
+            "Perfect CSI": 47.488
+          }
+        },
+        {
+          "precoder": "ZF",
+          "snr": 20,
+          "BER": {
+            "LS": 0.2665094339622642,
+            "LMMSE": 0.008986480795148247,
+            "CNN": 0.0036746125336927222,
+            "Perfect CSI": 0
+          },
+          "Goodput_Mbps": {
+            "LS": 1.855,
+            "LMMSE": 44.891,
+            "CNN": 46.746,
+            "Perfect CSI": 47.488
+          }
+        },
+        {
+          "precoder": "PZF",
+          "snr": 20,
+          "BER": {
+            "LS": 0.3113944575471698,
+            "LMMSE": 0.14668179329514824,
+            "CNN": 0.0983169432277628,
+            "Perfect CSI": 0
+          },
+          "Goodput_Mbps": {
+            "LS": 0,
+            "LMMSE": 14.469,
+            "CNN": 23.744,
+            "Perfect CSI": 47.488
+          }
+        }
+      ]
+    },
+    "64": {
+      "frames": 32,
+      "payload_bits_per_point": 379904,
+      "CNN_BER_better": 93,
+      "CNN_BER_worse": 0,
+      "CNN_BER_equal": 0,
+      "CNN_Goodput_better": 68,
+      "points20": [
+        {
+          "precoder": "MR",
+          "snr": 20,
+          "BER": {
+            "LS": 0.29379527459568733,
+            "LMMSE": 0.08194701819407008,
+            "CNN": 0.04078135528975741,
+            "Perfect CSI": 0
+          },
+          "Goodput_Mbps": {
+            "LS": 0,
+            "LMMSE": 26.341,
+            "CNN": 35.616,
+            "Perfect CSI": 47.488
+          }
+        },
+        {
+          "precoder": "ZF",
+          "snr": 20,
+          "BER": {
+            "LS": 0.2624794684973046,
+            "LMMSE": 0.0048222708894878705,
+            "CNN": 0.0027743851078167116,
+            "Perfect CSI": 0
+          },
+          "Goodput_Mbps": {
+            "LS": 2.597,
+            "LMMSE": 44.891,
+            "CNN": 46.746,
+            "Perfect CSI": 47.488
+          }
+        },
+        {
+          "precoder": "PZF",
+          "snr": 20,
+          "BER": {
+            "LS": 0.30939395215633425,
+            "LMMSE": 0.11941964285714286,
+            "CNN": 0.08424496714959569,
+            "Perfect CSI": 0
+          },
+          "Goodput_Mbps": {
+            "LS": 0,
+            "LMMSE": 20.034,
+            "CNN": 27.083,
+            "Perfect CSI": 47.488
+          }
+        }
+      ]
+    }
+  },
+  "LS_revision": {
+    "OriginalEvaluationRun": 41943264421,
+    "OriginalSource": "4f2da4aaf5c685c06b0425affe630eeb69cedec8",
+    "LSRun": 41946464299,
+    "RevisionSource": "a0583f0cd2347a9e0a93bfbc873a6ce623648fb6",
+    "ChangedEstimator": "LS",
+    "SelectionSeedBase": 19000000,
+    "ChannelCalibrationSeedBase": 18000000
+  },
+  "review_run": 41952508551,
+  "review_source": "5c74b6f339a304475d8a4c635c7d52fa60505ea4",
+  "result_artifact": {
+    "id": 13381188897,
+    "sha256": "e18633645754a40d1d90bd27faf9bcc347e6e5e91e703fc6980857ff3b529ba4"
+  },
+  "model_artifact": {
+    "id": 13380835648,
+    "sha256": "9f14165e860ddc81a92cc577f74dc26d1f0f6346aa5caf8a6efd9ae672157410"
+  }
+}
