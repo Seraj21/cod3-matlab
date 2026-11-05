@@ -1,0 +1,36 @@
+name: Train the integrated V3 MR and ZF receivers
+on:
+  push:
+    branches: [mu-cnn-v2]
+    paths: [.github/workflows/v3_integrated_train.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  train:
+    strategy:
+      fail-fast: false
+      matrix:
+        precoder: [MR, ZF]
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: v3-refined-frozen-model
+          run-id: 41946464299
+          github-token: ${{ github.token }}
+          path: v3_refined
+      - uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2025b
+          products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
+      - uses: matlab-actions/run-command@v3
+        with:
+          command: run_v4_train_pzf('integrated_receiver',true,'v3_refined/v3_model.mat',128,32,10,"${{ matrix.precoder }}");
+      - uses: actions/upload-artifact@v7
+        with:
+          name: v3-integrated-receiver-${{ matrix.precoder }}
+          path: integrated_receiver/
+          if-no-files-found: error

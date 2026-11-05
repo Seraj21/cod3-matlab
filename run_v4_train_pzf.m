@@ -1,12 +1,15 @@
-function run_v4_train_pzf(folder,useProjection,modelFile,trainFrames,validationFrames,epochs)
-% Match PZF receiver training to the 66-RB deployment waveform and BS CSI.
+function run_v4_train_pzf(folder,useProjection,modelFile,trainFrames,validationFrames,epochs,scheme)
+% Match each receiver to its 66-RB deployment waveform and BS CSI.
 if nargin<3,modelFile='v3_refined/v3_model.mat';end
 if nargin<4,trainFrames=128;end
 if nargin<5,validationFrames=32;end
 if nargin<6,epochs=10;end
+if nargin<7,scheme="PZF";end
+scheme=string(scheme);
+assert(isscalar(scheme) && ismember(scheme,["MR" "ZF" "PZF"]));
 addpath(pwd,'mu_mimo','v2_mimo');
 loaded=load(modelFile,'model');model=loaded.model;
-assert(model.Version==6 && model.Selection.PZF(1)==0);
+assert(model.Version==6 && model.Selection.(scheme)(1)==0);
 if ~isfolder(folder),mkdir(folder);end
 cfg=v3Config(32);r=v3Resources(cfg);
 layouts=cell(1,8);
@@ -16,8 +19,8 @@ for user=1:4
  layouts{user+4}=layout;layouts{user+4}.Label="Other_"+layout.Label;
 end
 stats=v2Prior("init",layouts,4);
-[training,stats,trainConditions]=collect(model,r,trainFrames,72000000,stats,true);
-[validation,~,valConditions]=collect(model,r,validationFrames,73000000,[],false);
+[training,stats,trainConditions]=collect(model,r,trainFrames,72000000,stats,true,scheme);
+[validation,~,valConditions]=collect(model,r,validationFrames,73000000,[],false,scheme);
 conditions=[trainConditions;valConditions];
 writetable(conditions,fullfile(folder,'conditions.csv'));
 priors=v2Prior("finalize",stats);clear stats
@@ -27,7 +30,7 @@ clear validation
 priors=calibrateVariance(priors,Y,[],0);
 [X,T]=examples(training,priors,r,useProjection);
 clear training
-receiver=model.Receivers.PZF;receiver.PriorsRX=priors;
+receiver=model.Receivers.(scheme);receiver.PriorsRX=priors;
 net=receiver.NetworkRX;
 loss=@v2RXLoss;
 if useProjection,loss=@v4AlignedLoss;end
@@ -39,8 +42,8 @@ options=trainingOptions('adam','MaxEpochs',epochs,'MiniBatchSize',32, ...
  'Shuffle','every-epoch','ExecutionEnvironment','cpu','ValidationData',{V,Y}, ...
  'ValidationFrequency',frequency,'ValidationPatience',5,'OutputNetwork','best-validation', ...
  'Verbose',true,'VerboseFrequency',frequency);
-fprintf('V4 PZF projection=%d: %d train patches, %d validation patches\n', ...
- useProjection,size(X,4),size(V,4));
+fprintf('%s projection=%d: %d train patches, %d validation patches\n', ...
+ scheme,useProjection,size(X,4),size(V,4));
 [net,info]=trainnet(X,T,net,loss,options);
 clear X T
 writetable(info.TrainingHistory,fullfile(folder,'learning.csv'));
@@ -58,18 +61,18 @@ receiver.TrainingPatches=24*trainFrames;receiver.ProjectionLoss=useProjection;
 receiver.TrainingBandwidthRB=66;receiver.TrainingCodeRate=.125;
 receiver.TrainingSeedBase=72000000;receiver.ValidationSeedBase=73000000;
 receiver.ValidationNormalizedMSE=[mean(target.^2,'all') mean((target-blend*residual).^2,'all')];
-save(fullfile(folder,'pzf_receiver.mat'),'receiver','-v7.3');
-fprintf('V4 PZF validation blend %.6f; normalized MSE %.6g -> %.6g\n', ...
- blend,receiver.ValidationNormalizedMSE);
+save(fullfile(folder,lower(scheme)+"_receiver.mat"),'receiver','-v7.3');
+fprintf('%s validation blend %.6f; normalized MSE %.6g -> %.6g\n', ...
+ scheme,blend,receiver.ValidationNormalizedMSE);
 end
-function [records,stats,conditions]=collect(model,r,count,seedBase,stats,training)
+function [records,stats,conditions]=collect(model,r,count,seedBase,stats,training,scheme)
 records=cell(8*count,1);at=0;conditions=zeros(count,5);
 for frame=1:count
  is64=mod(frame-1,2);bs=32+32*is64;
  cfg=v3Config(bs);seed=seedBase+frame;
  scene=v2Sounding(cfg,r,seed);
  tx=v2CEBase(scene.ULSamples,scene.ULNoise,r.UplinkLayout,model.PriorsTX);
- weights=v3Weights(tx.Wiener,tx.VarianceWiener,"PZF",scene,r);
+ weights=v3Weights(tx.Wiener,tx.VarianceWiener,scheme,scene,r);
  [grid,~]=muPayload(cfg,r,muSeed(seed,70));
  packet=v2Waveform(scene,r,grid,weights,true);
  n=ceil(frame/2)-1;
@@ -95,7 +98,7 @@ for frame=1:count
   end
  end
  if mod(frame,8)==0 || frame==count
-  fprintf('V4 PZF %s collected %d/%d channels\n',string(training),frame,count);
+  fprintf('%s training=%d collected %d/%d channels\n',scheme,training,frame,count);
  end
 end
 conditions=array2table(conditions,'VariableNames',{'Training','ChannelSeed','BS','SNR1_dB','SNR2_dB'});
