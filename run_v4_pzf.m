@@ -17,12 +17,10 @@ loaded=load(modelFile,'model');model=loaded.model;
 assert(model.Version==6 && model.Selection.PZF(1)==0);
 rx=model.Receivers.PZF;rx.BlendRX=rx.BlendRX*model.Selection.PZF(2);
 if any(ismember(methods,["Matched LMMSE" "Matched CNN"]))
- loaded=load(matchedFile,'receiver');matched=loaded.receiver;
- assert(isequal(matched.Signature,model.Signature) && ~matched.ProjectionLoss);
+ matched=loadReceiver(matchedFile,model,false);
 end
 if any(methods=="Aligned CNN")
- loaded=load(alignedFile,'receiver');aligned=loaded.receiver;
- assert(isequal(aligned.Signature,model.Signature) && aligned.ProjectionLoss);
+ aligned=loadReceiver(alignedFile,model,true);
 end
 cfg=v3Config(antennas);r=v3Resources(cfg);
 needTruth=any(methods=="Perfect CSIR");
@@ -100,4 +98,15 @@ assert(at==size(rows,1));
 settings=struct('FrameDuration',r.FrameDuration,'CodeRate',cfg.Rate,'CodedBits',r.CodedBits, ...
  'PayloadBits',r.PayloadBits,'SeedOffset',seedOffset,'SNR_dB',snrDb,'FrameCount',frames,'Config',cfg);
 save(fullfile(folder,'pzf_settings.mat'),'settings');
+end
+function receiver=loadReceiver(file,model,projection)
+loaded=load(file,'receiver');receiver=loaded.receiver;
+% Older PZF receivers inherit the geometry signature before V3 assembly.
+compatible=isequal(receiver.Signature,model.Signature) || ...
+ isequal(receiver.Signature,model.Receivers.PZF.Signature);
+assert(compatible,'PZF receiver geometry signature does not match the frozen model');
+assert(receiver.Version==model.Version && receiver.Scheme=="PZF" && ...
+ receiver.ProjectionLoss==projection && receiver.TrainingBandwidthRB==66 && ...
+ receiver.PilotMode==string(model.Signature.PilotMode) && ...
+ receiver.TrainingCodeRate==model.Signature.TargetCodeRate,'PZF training conditions do not match deployment');
 end

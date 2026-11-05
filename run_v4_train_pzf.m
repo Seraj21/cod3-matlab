@@ -52,7 +52,7 @@ end
 target=double(Y(:,6:12,1:128,:));residual=double(predicted(:,6:12,1:128,:));
 blend=max(0,min(1,sum(residual.*target,'all')/max(sum(residual.^2,'all'),eps)));
 priors=calibrateVariance(priors,Y,predicted,blend);
-receiver.PriorsRX=priors;receiver.NetworkRX=net;receiver.BlendRX=blend;
+receiver.PriorsRX=priors;receiver.NetworkRX=net;receiver.BlendRX=blend;receiver.Signature=model.Signature;
 receiver.TrainingChannels=trainFrames;receiver.ValidationChannels=validationFrames;
 receiver.TrainingPatches=24*trainFrames;receiver.ProjectionLoss=useProjection;
 receiver.TrainingBandwidthRB=66;receiver.TrainingCodeRate=.125;
