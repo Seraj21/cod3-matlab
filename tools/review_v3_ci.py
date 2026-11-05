@@ -25,7 +25,7 @@ plans=[
 selected={}
 for run,accept in plans:
     state=api(f"actions/runs/{run}")
-    assert state["conclusion"]=="success" or (run==41908344154 and state["conclusion"]=="failure"),(run,state["conclusion"])
+    assert state["conclusion"]=="success" or (run==41908344154 and state["status"]=="completed" and state["head_sha"]=="ec00ae08f0e470071158768d92b8320c490784c3"),(run,state["conclusion"])
     rows=api(f"actions/runs/{run}/artifacts?per_page=100")["artifacts"]
     for m in rows:
         if accept(m["name"]):

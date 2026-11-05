@@ -1,4 +1,5 @@
 name: V3 final reproducible results review
+# Accept only the completed original half-rate batches plus the verified exact-seed recovery.
 on:
   push:
     branches: [mu-cnn-v2]
