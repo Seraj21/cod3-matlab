@@ -43,5 +43,7 @@ for u=1:cfg.Users
 end
 input=struct('Observed',observed,'Samples',muPilotObservations(observed,r,"DL"), ...
  'Noise',noise,'Truth',truth,'TimingOffset',offsets,'CFO',frequency);
-if includeClean,input.CleanSamples=muPilotObservations(clean,r,"DL");end
+if includeClean
+ input.CleanSamples=muPilotObservations(clean,r,"DL");input.CleanObserved=clean;
+end
 end

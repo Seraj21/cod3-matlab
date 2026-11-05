@@ -1,0 +1,56 @@
+name: V3 all-reference channel estimators and attention receivers
+on:
+  push:
+    branches: [mu-cnn-v2]
+    paths: [.github/workflows/v3_rx.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2025b
+          products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
+      - uses: matlab-actions/run-command@v3
+        with:
+          command: addpath(pwd);results=runtests({'v2_mimo/tests/testV2RobustPhase.m','v2_mimo/tests/testV2PhaseGauge.m','v2_mimo/tests/testV3Receiver.m'});assertSuccess(results);
+  train:
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        scheme: [MR, ZF, PZF]
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: v2-transmitter-model
+          run-id: 41905811099
+          github-token: ${{ github.token }}
+          path: v2_tx_training
+      - uses: actions/download-artifact@v8
+        with:
+          name: v2-frozen-model
+          run-id: 41908344154
+          github-token: ${{ github.token }}
+          path: v2_frozen
+      - uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2025b
+          products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
+      - uses: matlab-actions/run-command@v3
+        with:
+          command: addpath(pwd,'mu_mimo','v2_mimo');v3TrainRX('${{ matrix.scheme }}','v2_tx_training/v2_tx.mat','v2_frozen/v2_model.mat','v3_training',20);
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: v3-receiver-${{ matrix.scheme }}
+          path: v3_training/
+          if-no-files-found: warn
