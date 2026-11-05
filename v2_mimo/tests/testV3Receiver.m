@@ -41,6 +41,12 @@ for nrb=[12 66]
  verifyEqual(testCase,b,a,'AbsTol',1e-9);verifyEqual(testCase,bv,av,'AbsTol',1e-8);verifyEqual(testCase,by,ay);
  changed=input;changed.Truth=100*input.Truth+100i;[c,cv]=v2EstimateRX(changed,model,r,"CNN");
  verifyEqual(testCase,c,b);verifyEqual(testCase,cv,bv);
+ for mode=["tensor DMRS" "tensor plus PTRS innovation" "triangular full pilots"]
+  refined=model;refined.LSInterpolation=mode;
+  refined.PriorsLS=v3LSMoments(model.PriorsRX,v3LSLayouts(r,mode));
+  [c,cv]=v3EstimateRX(input,refined,r,"CNN");verifyEqual(testCase,c,b);verifyEqual(testCase,cv,bv);
+  [d,dv]=v3EstimateRX(input,refined,r,"LMMSE");verifyEqual(testCase,d,a);verifyEqual(testCase,dv,av);
+ end
 end
 end
 function testAttentionGradient(testCase)

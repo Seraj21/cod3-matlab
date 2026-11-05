@@ -1,0 +1,191 @@
+name: V3 validated LS refinement and exact-seed comparison
+on:
+  push:
+    branches: [mu-cnn-v2]
+    paths: [.github/workflows/v3_ls_refine.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  freeze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v7
+      - name: Wait for the independently selected CNN model
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          for attempt in $(seq 1 240); do
+            found="$(gh api repos/Seraj21/cod3-matlab/actions/runs/41943264421/artifacts --jq '.artifacts[] | select(.name == "v3-frozen-model" and .expired == false) | .id')"
+            if [ -n "$found" ]; then exit 0; fi
+            conclusion="$(gh run view 41943264421 --json conclusion --jq .conclusion)"
+            if [ "$conclusion" = failure ] || [ "$conclusion" = cancelled ]; then exit 1; fi
+            sleep 30
+          done
+          exit 1
+      - uses: actions/download-artifact@v8
+        with:
+          name: v3-frozen-model
+          run-id: 41943264421
+          github-token: ${{ github.token }}
+          path: v3_base
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: v3-receiver-*
+          run-id: 41942634465
+          github-token: ${{ github.token }}
+          path: rx_models
+      - uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2025b
+          products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
+      - uses: matlab-actions/run-command@v3
+        with:
+          command: addpath(pwd);results=runtests('v2_mimo/tests/testV3Receiver.m');assertSuccess(results);v3_refine_freeze;
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: v3-refined-frozen-model
+          path: v3_refined/
+          if-no-files-found: warn
+  evaluate:
+    needs: freeze
+    strategy:
+      fail-fast: false
+      matrix:
+        antennas: [32, 64]
+        batch: [0, 1, 2, 3, 4, 5, 6, 7]
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: v3-refined-frozen-model
+          path: v3_refined
+      - uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2025b
+          products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
+      - uses: matlab-actions/run-command@v3
+        with:
+          command: run_v3_mimo(${{ matrix.antennas }},4,'v3_ls_results',[0:.5:10 11:20],50000000+${{ matrix.batch }}*100000,'v3_refined/v3_model.mat',1);
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: v3-ls-evaluation-${{ matrix.antennas }}-${{ matrix.batch }}
+          path: v3_ls_results/
+          if-no-files-found: warn
+  merge:
+    needs: evaluate
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v7
+      - name: Require all original non-LS measurements to finish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run watch 41943264421 --exit-status --interval 60
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: v3-evaluation-*
+          run-id: 41943264421
+          github-token: ${{ github.token }}
+          path: original_results
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: v3-ls-evaluation-*
+          path: ls_results
+      - uses: actions/download-artifact@v8
+        with:
+          name: v3-refined-frozen-model
+          path: v3_refined
+      - uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2025b
+          products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
+      - uses: matlab-actions/run-command@v3
+        with:
+          command: v3_merge_ls;
+      - uses: actions/upload-artifact@v7
+        with:
+          name: v3-final-evaluation-32-0
+          path: v3_merged/v3-final-evaluation-32-0/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          name: v3-final-evaluation-32-1
+          path: v3_merged/v3-final-evaluation-32-1/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          name: v3-final-evaluation-32-2
+          path: v3_merged/v3-final-evaluation-32-2/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          name: v3-final-evaluation-32-3
+          path: v3_merged/v3-final-evaluation-32-3/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          name: v3-final-evaluation-32-4
+          path: v3_merged/v3-final-evaluation-32-4/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          name: v3-final-evaluation-32-5
+          path: v3_merged/v3-final-evaluation-32-5/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          name: v3-final-evaluation-32-6
+          path: v3_merged/v3-final-evaluation-32-6/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          name: v3-final-evaluation-32-7
+          path: v3_merged/v3-final-evaluation-32-7/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          name: v3-final-evaluation-64-0
+          path: v3_merged/v3-final-evaluation-64-0/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          name: v3-final-evaluation-64-1
+          path: v3_merged/v3-final-evaluation-64-1/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          name: v3-final-evaluation-64-2
+          path: v3_merged/v3-final-evaluation-64-2/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          name: v3-final-evaluation-64-3
+          path: v3_merged/v3-final-evaluation-64-3/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          name: v3-final-evaluation-64-4
+          path: v3_merged/v3-final-evaluation-64-4/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          name: v3-final-evaluation-64-5
+          path: v3_merged/v3-final-evaluation-64-5/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          name: v3-final-evaluation-64-6
+          path: v3_merged/v3-final-evaluation-64-6/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          name: v3-final-evaluation-64-7
+          path: v3_merged/v3-final-evaluation-64-7/
+          if-no-files-found: error
