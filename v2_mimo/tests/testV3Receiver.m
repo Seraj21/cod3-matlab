@@ -53,6 +53,25 @@ norms=cellfun(@(g)sum(abs(extractdata(g)).^2,'all'),gradients.Value);
 attention=contains(string(gradients.Layer),'attention_expand');verifyGreaterThan(testCase,sum(norms(attention)),0);
 verifyTrue(testCase,all(isfinite(norms)));
 end
+function testResidualLSKeepsConsistentLegacyInterpolation(testCase)
+r=v3Resources(v2Config(32,12));layouts=v3ResidualLSLayouts(r);
+stream=RandStream('mt19937ar','Seed',775);samples=complex(zeros(r.K,r.L,2,4));
+for user=1:4
+ p=r.DMRSLegacyLayouts{user};mask=repmat(p.Mask,r.K/p.W,1,2);
+ a=complex(randn(stream,r.K,r.L,2),randn(stream,r.K,r.L,2));a(~mask)=0;
+ samples(:,:,:,user)=a;
+end
+baseline=muLS(samples,r.DMRSLegacyLayouts);
+for user=1:4
+ p=r.DownlinkLayout{user};old=r.DMRSLegacyLayouts{user};
+ mask=repmat(p.Mask & ~old.Mask,r.K/p.W,1,2);
+ a=samples(:,:,:,user);b=baseline(:,:,:,user);a(mask)=b(mask);samples(:,:,:,user)=a;
+ verifyEqual(testCase,p.Count,22);
+ verifyEqual(testCase,layouts{user}.Linear(:,p.Observed),eye(22),'AbsTol',1e-10);
+end
+reconstructed=muLS(samples,layouts);
+verifyEqual(testCase,reconstructed,baseline,'AbsTol',1e-10);
+end
 function input=fixture(r,stream)
 y=complex(randn(stream,r.K,r.L,16),randn(stream,r.K,r.L,16));
 truth=complex(randn(stream,r.K,r.L,16,4),randn(stream,r.K,r.L,16,4));

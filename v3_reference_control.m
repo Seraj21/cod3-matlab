@@ -2,9 +2,9 @@ function v3_reference_control
 % Diagnose all-reference interpolation independently of the learned receiver.
 % Truth is used only to score this diagnostic; no truth enters either LS path.
 addpath(pwd,'mu_mimo','v2_mimo');load('v2_frozen/v2_model.mat','model');
-rows=cell(0,13);variants=["MR" "ZF" "PZF baseline" "PZF V3"];
+rows=cell(0,15);variants=["MR" "ZF" "PZF baseline" "PZF V3"];
 for bs=[32 64]
- cfg=v3Config(bs);r=v3Resources(cfg);
+ cfg=v3Config(bs);r=v3Resources(cfg);residualLayouts=v3ResidualLSLayouts(r);
  for frame=1:4
   scene=v2Sounding(cfg,r,6900000+bs*1000+frame);
   [grid,~]=muPayload(cfg,r,muSeed(scene.Seed,70));
@@ -22,16 +22,19 @@ for bs=[32 64]
     for q=1:3
      old=muLS(muPilotObservations(observations{q},r,"DL"),r.DMRSLegacyLayouts);
      full=muLS(v3PilotObservations(observations{q},r),r.DownlinkLayout);
+     residual=muLS(v3PilotObservations(observations{q},r),residualLayouts);
      [oldBeam,oldAll]=ownNMSE(old,input.Truth,r);
      [fullBeam,fullAll]=ownNMSE(full,input.Truth,r);
+     [residualBeam,residualAll]=ownNMSE(residual,input.Truth,r);
      rows(end+1,:)={bs,frame,scene.Seed,variants(k),snr,labels(q), ...
-      oldBeam,fullBeam,oldAll,fullAll,18,22,d.MaximumPowerError}; %#ok<AGROW>
+      oldBeam,fullBeam,oldAll,fullAll,18,22,d.MaximumPowerError,residualBeam,residualAll}; %#ok<AGROW>
     end
    end
   end
   T=cell2table(rows,'VariableNames',{'BSAntennas','Frame','ChannelSeed','Variant', ...
    'SNR_dB','Observation','DMRS_OwnBeamNMSE','FullPilot_OwnBeamNMSE', ...
-   'DMRS_AllRxNMSE','FullPilot_AllRxNMSE','DMRSCount','FullPilotCount','PowerError'});
+   'DMRS_AllRxNMSE','FullPilot_AllRxNMSE','DMRSCount','FullPilotCount','PowerError', ...
+   'ResidualLS_OwnBeamNMSE','ResidualLS_AllRxNMSE'});
   writetable(T,'v3_reference_control.csv');
   fprintf('V3 independent reference control BS%d frame%d/4 complete\n',bs,frame);
  end

@@ -1,4 +1,5 @@
 name: V3 independent all-reference observation control
+# Compare PTRS-innovation interpolation against both original LS operators.
 on:
   push:
     branches: [mu-cnn-v2]
@@ -24,10 +25,10 @@ jobs:
           products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
       - uses: matlab-actions/run-command@v3
         with:
-          command: v3_reference_control;
+          command: results=runtests('v2_mimo/tests/testV3Receiver.m');assertSuccess(results);v3_reference_control;
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: v3-reference-control
+          name: v3-reference-residual-control
           path: v3_reference_control.csv
           if-no-files-found: warn

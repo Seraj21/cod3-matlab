@@ -9,6 +9,46 @@ import analyze_mu as raw_audit
 from analyze_mu import read_batch,writecsv,SNRS,PRECODERS,ESTIMATORS,A,T,U,N,BATCHES,CAP,FIELDS
 from mu_plotting import figure_for_series,audit_rows
 
+def v2_review(summary,args):
+    model=summary['model'];frames=N*BATCHES
+    rate={.5:'1/2',.25:'1/4',.125:'1/8'}[args.rate]
+    text=f"""# نتائج المحاكاة المرجعية V2
+
+تدرس هذه المحاكاة MU downlink بقناة TDL-C و512-QAM وLDPC، بمعدل حمولة مستهدف {rate}. تُقارن MR وZF وPZF كلٌّ على حدة، مع LS وLMMSE وCNN وPerfect CSI. للمحطة 32 أو64 هوائيًا وثماني سلاسل RF، وتخدم أربعة مستخدمين، لكل منهم أربعة هوائيات استقبال وطبقة واحدة.
+
+بقيت السرعة 120km/h، وانتشار التأخير 1µs، والتردد 28GHz، وSNR مراجع الرفع 15dB. يمتد SNR التنزيل من 0 إلى20dB، بخطوة 0.5 حتى10 ثم1dB. المحور هو SNR الاسمي قبل مكاسب المصفوفة والجمع؛ لا يعني 0dB عليه أن SINR بعد الجمع يساوي صفرًا.
+
+تستخدم المقارنات بتات الحمولة نفسها والقناة والضوضاء نفسها. تتغير الموجة المرسلة مع أوزان precoding. مصفوفة RF ثابتة ومتصلة جزئيًا. يستعمل PZF هنا سعة ثابتة وطورًا من4بتات، مع جولتي بحث إحداثي. هذا تقريب مقيد، وليس hybrid phased-ZF المنشور ببنية RF متكيفة يتبعها ZF رقمي.
+
+شملت التصحيحات توحيد نافذة FFT مع مرجع القناة عند CP fraction=0.75، وأوزان baseband لكل حاملة، وتقدير اضطراب مكاني من المراجع المعروفة. يعيد المستقبل فك الحمولات الفاشلة باستعمال حزمة SRS؛ يعتمد قبول المحاولة على CRC، دون معرفة بتات الحمولة الأصلية عند الاختيار.
+
+تضم شبكة المحطة خمسة متنبئات قناة وتتعلم المزج بينها. توجد ثلاثة مستقبلات CNN منفصلة لتصحيح القناة وعدم يقينها. أعداد التدريب والتحقق الفعلية محفوظة في ملخص النموذج. استعمل التدريب رقعًا محلية من24حاملة على12RB، ثم استُخدم النموذج على66RB. لا تدخل القناة الحقيقية أو السرعة الحقيقية إلى الاستدلال العملي.
+
+اختيرت معاملات CNN على16إطار تحقق حمولة مستقل قبل الاختبار. اختير إلغاء تصحيح المحطة واستعمال تصحيح المستقبل؛ لذلك يعني منحنى CNN ‏LMMSE عند BS وCNN عند UE. تحسن MSE شبكة المحطة لم يكن كافيًا لقبولها بحسب BER.
+
+لكل حجم محطة {frames} إطار قناة مستقل، و{frames*U*A} بت حمولة لكل نقطة. يُحسب BER بعد LDPC من جميع الحمولات، بما فيها الحمولات الفاشلة. يُحسب Goodput من بتات الحمولات الصحيحة المجتازة CRC مقسومًا على زمن الإطارات الكامل، مع sounding والحراسة والمراجع. سقف الموارد {CAP:g}Mbit/s. لا يتضمن الحساب MAC أوHARQ. التعديل 512-QAM وموارد sounding تجريبيان ضمن هيكل مبني على NR.
+
+إذا رُصد صفر أخطاء، توضع علامة مفتوحة عند 1/Nbits لظهورها على المحور اللوغاريتمي؛ تحفظ CSV القيمة الأصلية صفرًا. Goodput صفري يعني عدم تسليم حمولة صحيحة ضمن العينة. لا تحل قيمة صفر محل قياس مفقود، ولا ترتب قيم BER لإجبارها على التناقص. المفتاح داخل الرسم وتظهر تدريجات المحور العلمية.
+"""
+    if args.rate!=.5:
+        text+='\nهذه نقطة تشغيل منفصلة بحماية LDPC أقوى وسقف حمولة أقل. بقيت القناة والتعديل والمستخدمون والمراجع وأوزان CNN المجمدة نفسها. اختيرت معاملات CNN مسبقًا بتحقق حمولة عند1/2، ولم تُعد اختيارها على اختبار الحماية الأقوى.\n'
+    text+='\n## القيم عند 20dB\n\n| BS | Precoder | BER LS | BER LMMSE | BER CNN | BER Perfect CSI | Goodput CNN Mbit/s |\n|---|---|---|---|---|---|---|\n'
+    for array,info in summary['arrays'].items():
+        for row in info['points']:
+            if row['snr']!=20:continue
+            b=row['BER'];text+=f"| {array} | {row['precoder']} | {b['LS']:.6g} | {b['LMMSE']:.6g} | {b['CNN']:.6g} | {b['Perfect CSI']:.6g} | {row['Goodput_Mbps']['CNN']:.6g} |\n"
+    text+='\n## معاملات CNN المجمدة\n\n| Precoder | معامل المحطة من تحقق الحمولة | معامل المستقبل من تحقق الحمولة | معامل المستقبل من تحقق القناة |\n|---|---|---|---|\n'
+    for precoder in PRECODERS:
+        a=model['Selection'][precoder]
+        text+=f"| {precoder} | {a[0]:g} | {a[1]:g} | {model['BlendRX'][precoder]:.6g} |\n"
+    text+=f"\nمعامل شبكة المحطة من تحقق القناة: {model['BlendTX']:.6g}. المعامل الفعلي هو حاصل ضرب معاملي تحقق القناة والحمولة.\n"
+    text+='\nيعرض ملف المقارنة الزوجية فروق CNN وLMMSE وفترات ثقة نقطية بإعادة أخذ العينات على إطار القناة كاملًا. تحجب الفترة عند اختلاف أقل من خمسة أطر؛ لا تصحح هذه الفترات تعدد المقارنات عبر SNR. راجع V2-summary.json لمصدر الدفعات وبصمات الشبكات، وReference-Equation-Audit.md لمراجعة المصادر.\n'
+    if args.recovery_run_id:
+        text+='\nتوقفت تسع دفعات أصلية عند حد الخادم90دقيقة. أُعيدت كل دفعة في جزأين من8أطر بالمصدر الأصلي والبذور والأوزان نفسها، ثم جُمعت في ترتيب الأطر الأصلي مع التحقق من بصمات الشبكات. لا يُحذف إطار متعثر أو يُعامل كقياس صفري.\n'
+        text+=f'\nتشغيل استكمال الدفعات: https://github.com/Seraj21/cod3-matlab/actions/runs/{args.recovery_run_id}\n'
+    text+=f'\nالمصدر: https://github.com/Seraj21/cod3-matlab/tree/{args.source}\n\nالتشغيل: https://github.com/Seraj21/cod3-matlab/actions/runs/{args.run_id}\n'
+    return text
+
 def v3_review(summary,args):
     model=summary['model'];frames=N*BATCHES
     text=f"""# مراجعة نتائج V3: تقدير القناة الفعالة بالطيار المتاح
@@ -105,6 +145,7 @@ def main():
     N=args.frames_per_batch;BATCHES=args.batches
     assert N>0 and BATCHES>0
     raw_audit.N=N;raw_audit.BATCHES=BATCHES
+    if args.seed_base is None:args.seed_base=50000000 if args.version==3 else (20000000 if args.rate==.5 else 30000000)
     prefix=f'V{args.version}'
     catalog=json.loads((root/'GitHub-artifact-catalog.json').read_text())
     by_name={item['name']+'.zip':item for item in catalog}
@@ -186,7 +227,7 @@ def main():
             for kind,values in [('BER',ber[:,p,:]),('Goodput',gp[:,p,:])]:
                 figure_for_series(SNRS,values,array,precoder,kind,bits,len(e),CAP,
                     out/f'{prefix}-{precoder}-{kind}-BS{array}.png',
-                    measured_label=f'Independent frozen-model simulation | LDPC target rate {rate_label}\nCNN curve: selected LMMSE at BS + learned CNN at UE')
+                    measured_label=f'V{args.version} | Independent frozen-model simulation | LDPC target rate {rate_label}\nCNN curve: selected LMMSE at BS + learned CNN at UE')
         summary['arrays'][str(array)]={'frames':len(e),'payload_bits_per_point':bits,'points':points,
             'CNN_BER_better':int(np.count_nonzero(ber[:,:,2]<ber[:,:,1])),
             'CNN_BER_worse':int(np.count_nonzero(ber[:,:,2]>ber[:,:,1])),
@@ -226,49 +267,7 @@ def main():
         f'Four identical frozen CNN weight sets in all {2*BATCHES} batches',
         'No BER smoothing, sorting, forced monotonicity or substituted zero measurements']
     (out/f'{prefix}-summary.json').write_text(json.dumps(summary,indent=2,ensure_ascii=False))
-    text='''# نتائج النسخة المصححة V2
-
-هذه نتائج محاكاة موجية زمنية لـTDL-C و512-QAM وLDPC بمعدل حمولة{RATE_LABEL}، مع محطة32 أو64 هوائيًا وثماني سلاسلRF وأربعة مستخدمين، لكل مستخدم أربعة هوائيات استقبال وطبقة واحدة.
-
-يبقى انتشار التأخير1µs والسرعة120km/h والتردد28GHz وSNR الرفع15dB. يمتد محور SNR التنزيل من0 إلى20dB، بخطوة0.5 حتى10 ثم1dB.
-
-تستقل تجارب MR وZF وPZF مع LS وLMMSE وCNN وPerfect CSI. تستخدم المقارنات الحمولات نفسها وعينات القناة والضوضاء نفسها؛ تتغير الموجة المرسلة مع تغير أوزان precoding. تبقى مصفوفة RF ثابتة ومتصلة جزئيًا. يستخدم PZF سعة ثابتة وطورًا مكممًا إلى4بتات.
-
-صُحح مسار الاستقبال بتوحيد موضع نافذةFFT مع مرجع القناة عندCP fraction0.75، واستخدام أوزان baseband لكل حاملة، وتقدير مصفوفة التداخل والضوضاء من المراجع المعروفة. يعيد المستقبل فك الحمولات الفاشلة بحزمة SRS ويقبل المحاولة فقط عند نجاحCRC، دون الرجوع إلى بتات الحمولة الأصلية في الاختيار.
-
-تستخدم شبكة المحطة قياسات الطيار لتعلّم المزج بين خمسة متنبئات قناة مشروطة بدوبلر. لا تدخل السرعة الحقيقية في الاستدلال. توجد ثلاثة نماذج CNN للمستقبل، منفصلة حسبprecoder، مع ترتيب طبقة المستخدم أولًا وتعلّم تصحيح القناة وعدم يقينها. يبقى LMMSE مرجعًا بإحصاءات مشروطة مماثلة. دُربت شبكة المحطة على1920 قناة وتحققت على240 قناة مستقلة؛ استعمل كل مستقبل640 قناة تدريب و80 قناة تحقق. ثم اختير مقدار التصحيح على16 إطارًا آخر قبل تجميد النموذج. تعرض ملفات التدريب الأعداد الفعلية ومعاملات الاختيار.
-
-استعمل التدريب12RB مع رقع محلية من24حاملة، والاختبار66RB على التباعد الزمني والترددي نفسه. اختُبر مسار الاستدلال الكامل66RB قبل التحقق بالحمولة. لا يُستخدم إطار اختبار في التدريب أو اختيار المعاملات.
-
-كل منحنى يحوي128 إطار قناة مستقلًا و{BITS_PER_POINT}بت حمولة لكل نقطة. يحسبBER من بتات الحمولة بعدLDPC، ويحسبGoodput من الحمولات الصحيحة المجتازةCRC مقسومًا على زمن الإطارات الكامل، شاملاً sounding والحراسة والمراجع. سقف الموارد{CEILING}Mbit/s. لا يشمل هذا المعدلHARQ أوMAC. التعديل512-QAM وموارد sounding تجريبيان ضمن هيكل مبني علىNR.
-
-العلامة المفتوحة عندBER صفري مرصود تُعرض عند1/Nbits لإظهارها على المحور اللوغاريتمي؛ العدد الحقيقي محفوظ فيCSV. المنحنى الثابت عندGoodput=0 يعني أن الاختبار لم يسلم حمولة صحيحة، وليس قياسات مفقودة. تتبادل الطرق مواضع العلامات على نقاطSNR الفعلية لإظهار التطابق دون تحريك البيانات.
-
-## القيم عند20dB
-
-| BS | Precoder | BER LS | BER LMMSE | BER CNN | BER Perfect CSI | Goodput CNN Mbit/s |
-|---|---|---|---|---|---|---|
-'''
-    text=text.replace('128 إطار قناة',f'{N*BATCHES} إطار قناة').replace('{RATE_LABEL}',rate_label).replace('{BITS_PER_POINT}',str(N*BATCHES*U*A)).replace('{CEILING}',f'{CAP:g}')
-    if args.rate!=.5:
-        note='هذه نقطة تشغيل منفصلة بحمايةLDPC أقوى. بقيت القناة والتعديل والمستخدمون وموارد المراجع وشبكاتCNN المجمدة نفسها. لم تُعد اختيار معاملاتCNN على هذه النتائج؛ اختيرت المعاملات مسبقًا على تحقق مستقل بمعدل1/2. انخفاض سقف الحمولة نتيجة صريحة لزيادة الحماية.'
-        text=text.replace('## القيم عند20dB',note+'\n\n## القيم عند20dB')
-    for array,info in summary['arrays'].items():
-        for row in info['points']:
-            if row['snr']!=20:continue
-            b=row['BER'];text+=f"| {array} | {row['precoder']} | {b['LS']:.6g} | {b['LMMSE']:.6g} | {b['CNN']:.6g} | {b['Perfect CSI']:.6g} | {row['Goodput_Mbps']['CNN']:.6g} |\n"
-    text+='\n## معاملات CNN المجمدة\n\nالمعاملات التالية اختيرت على تحقق الحمولة المستقل، قبل الاختبار. المعامل صفر يلغي التصحيح في ذلك الطرف ويستعمل تقديرLMMSE. عندصفر في الطرفين يتطابق منحنىCNN معLMMSE عن قصد، وتبقى العلامات المختلفة ظاهرة. لا يُدّعى تحسن شبكة جرى إلغاء تصحيحها.\n\n'
-    text+='| Precoder | معامل المحطة من تحقق الحمولة | معامل المستقبل من تحقق الحمولة | معامل المستقبل من تحقق القناة |\n|---|---|---|---|\n'
-    for precoder in PRECODERS:
-        selection=model['Selection'][precoder]
-        text+=f"| {precoder} | {selection[0]:g} | {selection[1]:g} | {model['BlendRX'][precoder]:.6g} |\n"
-    text+=f"\nمعامل شبكة المحطة من تحقق القناة: {model['BlendTX']:.6g}. المعامل الفعلي هو حاصل ضرب معاملي تحقق القناة والحمولة.\n"
-    text+='\nملف المقارنة الزوجية يعرض فروقCNN وLMMSE وفترات ثقة نقطية بإعادة أخذ العينات على إطار القناة كاملًا. تحجب الفترة عندما تختلف أقل من خمسة إطارات؛ لا تُفسر العلامات الصفرية كضمان لخطأ صفري.\n'
-    if args.recovery_run_id:
-        text+='\nتوقفت تسع دفعات أصلية عند حد الخادم90دقيقة؛ أُعيدت كل دفعة إلى جزأين من8أطر باستخدام المصدر الأصلي نفسه، والبذور نفسها، والأوزان المجمدة نفسها. أعيد تجميعها في ترتيب الأطر الأصلي مع التحقق من بصمات الشبكات. يحددV2-summary.json مصدر كل دفعة؛ لا يُحذف إطار متعثر ولا يعامل كقياس صفري.\n'
-        text+=f'\nتشغيل استكمال الدفعات: https://github.com/Seraj21/cod3-matlab/actions/runs/{args.recovery_run_id}\n'
-    text+=f'\nالمصدر المستخدم: https://github.com/Seraj21/cod3-matlab/tree/{args.source}\n\nالتشغيل: https://github.com/Seraj21/cod3-matlab/actions/runs/{args.run_id}\n'
-    if args.version==3:text=v3_review(summary,args)
+    text=v3_review(summary,args) if args.version==3 else v2_review(summary,args)
     (out/f'{prefix}-Review.md').write_text(text,encoding='utf-8')
     archive=out.parent/args.archive_name
     with zipfile.ZipFile(archive,'w',zipfile.ZIP_DEFLATED) as z:
