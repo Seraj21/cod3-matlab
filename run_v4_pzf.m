@@ -9,8 +9,9 @@ if nargin<8,methods=["LS" "LMMSE" "V3 CNN" "Perfect CSI"];end
 if nargin<9,matchedFile="";end
 if nargin<10,alignedFile="";end
 modes=string(modes);methods=string(methods);
-assert(all(ismember(modes,["None" "LBP50" "APP20" "CSI-APP20" "CSI-APP50"])));
-assert(all(ismember(methods,["LS" "LMMSE" "Matched LMMSE" "V3 CNN" "Matched CNN" "Aligned CNN" "Perfect CSI"])));
+assert(all(ismember(modes,["None" "NMS50" "LBP50" "APP20" "APP50" "CSI-APP20" "CSI-APP50"])));
+assert(all(ismember(methods,["LS" "LS on common packet" "LMMSE" "Matched LMMSE" ...
+ "V3 CNN" "Matched CNN" "Aligned CNN" "Perfect CSIR" "Perfect CSI"])));
 assert(all(diff(snrDb)>0) && min(snrDb)>=0 && max(snrDb)<=20);
 loaded=load(modelFile,'model');model=loaded.model;
 assert(model.Version==6 && model.Selection.PZF(1)==0);
@@ -24,13 +25,19 @@ if any(methods=="Aligned CNN")
  assert(isequal(aligned.Signature,model.Signature) && aligned.ProjectionLoss);
 end
 cfg=v3Config(antennas);r=v3Resources(cfg);
+needTruth=any(methods=="Perfect CSIR");
 rows=cell(frames*numel(snrDb)*numel(methods)*numel(modes)*cfg.Users,13);at=0;
 for frame=1:frames
  scene=v2Sounding(cfg,r,seedOffset+frame);
  [grid,payload]=muPayload(cfg,r,muSeed(scene.Seed,70));
  tx=v2CEBase(scene.ULSamples,scene.ULNoise,r.UplinkLayout,model.PriorsTX);
  weights=v3Weights(tx.Wiener,tx.VarianceWiener,"PZF",scene,r);
- common=v2Waveform(scene,r,grid,weights,false);
+ common=v2Waveform(scene,r,grid,weights,needTruth);
+ if needTruth && frame==1
+  reference=v2Waveform(scene,r,grid,weights,false);
+  assert(isequal(common.Waveform,reference.Waveform),'Requesting truth changed the transmitted experiment');
+  clear reference
+ end
  if any(methods=="LS")
   weights=v3Weights(tx.LS,tx.VarianceLS,"PZF",scene,r);
   lsPacket=v2Waveform(scene,r,grid,weights,false);
@@ -46,6 +53,10 @@ for frame=1:frames
    switch method
     case "LS"
      input=v3Receive(lsPacket,scene,r,snr,false,false);
+    case "LS on common packet"
+     internal="LS";
+    case "Perfect CSIR"
+     internal="Perfect";
     case "Perfect CSI"
      input=v3Receive(oracle,scene,r,snr,true,false);internal="Perfect";
     case "V3 CNN"

@@ -1,0 +1,67 @@
+name: PZF same-packet references and receiver controls
+on:
+  push:
+    branches: [mu-cnn-v2]
+    paths: [.github/workflows/v4_pzf_controls.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  same-packet:
+    strategy:
+      fail-fast: false
+      matrix:
+        antennas: [32, 64]
+        batch: [0, 1, 2, 3, 4, 5, 6, 7]
+    runs-on: ubuntu-latest
+    timeout-minutes: 95
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: v3-refined-frozen-model
+          run-id: 41946464299
+          github-token: ${{ github.token }}
+          path: v3_refined
+      - uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2025b
+          products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
+      - uses: matlab-actions/run-command@v3
+        with:
+          command: run_v4_pzf(${{ matrix.antennas }},4,'v4_same_wave',[0:.5:10 11:20],90000000+${{ matrix.batch }}*100000,'v3_refined/v3_model.mat',["None" "CSI-APP50"],["LS on common packet" "LMMSE" "Perfect CSIR"]);
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: v4-same-wave-${{ matrix.antennas }}-${{ matrix.batch }}
+          path: v4_same_wave/
+          if-no-files-found: error
+  component:
+    strategy:
+      fail-fast: false
+      matrix:
+        antennas: [32, 64]
+        batch: [0, 1]
+    runs-on: ubuntu-latest
+    timeout-minutes: 95
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: v3-refined-frozen-model
+          run-id: 41946464299
+          github-token: ${{ github.token }}
+          path: v3_refined
+      - uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2025b
+          products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
+      - uses: matlab-actions/run-command@v3
+        with:
+          command: run_v4_pzf(${{ matrix.antennas }},4,'v4_component',[0 4 8 12 16 20],75000000+${{ matrix.batch }}*100000,'v3_refined/v3_model.mat',["None" "NMS50" "LBP50" "APP50" "CSI-APP50"],["LS on common packet" "LMMSE" "V3 CNN"]);
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: v4-component-${{ matrix.antennas }}-${{ matrix.batch }}
+          path: v4_component/
+          if-no-files-found: error
