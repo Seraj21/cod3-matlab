@@ -17,14 +17,7 @@ jobs:
         shell: bash
         run: |
           gh run watch 42001461162 --repo "$GITHUB_REPOSITORY" --exit-status --interval 45
-          for attempt in $(seq 1 200); do
-            ready="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/42000390625/artifacts" --jq '.artifacts[] | select(.name == "v4-frozen-choice" and .expired == false) | .id')"
-            if [ -n "$ready" ]; then exit 0; fi
-            status="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/42000390625" --jq .status)"
-            if [ "$status" = completed ]; then exit 1; fi
-            sleep 45
-          done
-          exit 1
+          gh run watch 42006472610 --repo "$GITHUB_REPOSITORY" --exit-status --interval 45
   evaluate:
     needs: gate
     strategy:
@@ -39,7 +32,7 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           name: v4-frozen-choice
-          run-id: 42000390625
+          run-id: 42006472610
           github-token: ${{ github.token }}
           path: frozen_choice
       - uses: actions/download-artifact@v8
@@ -75,7 +68,7 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           name: v4-frozen-choice
-          run-id: 42000390625
+          run-id: 42006472610
           github-token: ${{ github.token }}
           path: frozen_choice
       - uses: actions/download-artifact@v8
