@@ -2,7 +2,7 @@
 import math
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.ticker import LogLocator, LogFormatterSciNotation
+from matplotlib.ticker import LogLocator, LogFormatterSciNotation, MaxNLocator
 
 NAMES = ["LS", "LMMSE", "CNN", "Perfect CSI"]
 COLORS = ["#be7615", "#356db3", "#c63267", "#238160"]
@@ -50,7 +50,8 @@ def figure_for_series(x, values, array, precoder, kind, payload_bits, frames,
         peak = float(values.max())
         upper = max(1, peak*1.12)
         ax.set_ylim(-.045*upper, upper)
-        ax.set_yticks(np.linspace(0, upper, 6))
+        ticks = MaxNLocator(nbins=6, steps=[1, 2, 2.5, 5, 10]).tick_values(0, upper)
+        ax.set_yticks(ticks[(ticks >= 0) & (ticks <= upper)])
         ax.set_ylabel("Sum payload goodput (Mbit/s)")
         ax.axhline(0, color="#777777", linewidth=.7, zorder=1)
         if peak == 0:

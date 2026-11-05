@@ -9,7 +9,44 @@ import analyze_mu as raw_audit
 from analyze_mu import read_batch,writecsv,SNRS,PRECODERS,ESTIMATORS,A,T,U,N,BATCHES,CAP,FIELDS
 from mu_plotting import figure_for_series,audit_rows
 
-def audit_configuration(path,array,batch,rate,model,e,f):
+def v3_review(summary,args):
+    model=summary['model'];frames=N*BATCHES
+    text=f"""# مراجعة نتائج V3: تقدير القناة الفعالة بالطيار المتاح
+
+هذه محاكاة زمنية لـMU downlink بقناة TDL-C و512-QAM وLDPC، بمعدل حمولة مستهدف 1/8. تُدرس MR وZF وPZF بصورة مستقلة، مع LS وLMMSE وCNN وPerfect CSI. المحطتان 32 و64 هوائيًا، مع ثماني سلاسل RF وأربعة مستخدمين؛ لكل مستخدم أربعة هوائيات استقبال وطبقة واحدة.
+
+بقيت الموارد المرسلة وقدرة المراجع ثابتتين. استُخدمت 22 ملاحظة لكل رقعة محلية من 24 حاملة بدل 18، بإدخال PTRS المرسلة أصلًا مع DMRS في جميع المقدرات العملية. أُعيد حساب إحصاءات LMMSE وتدريب CNN على الملاحظات نفسها. بقيت السرعة 120km/h وانتشار التأخير 1µs والتردد 28GHz وSNR الرفع 15dB، مع تباعد 60kHz وCP ممتد واختبار على 66RB. محور SNR هو الاسمي للتنزيل من 0 إلى 20dB؛ تبقى مكاسب المصفوفة والجمع داخل الأداء، وليس هذا SINR بعد الجمع.
+
+احتفظ MR وZF بأوزان V2. يستعمل PZF بحث SLNR واعيًا بضوضاء التصميم وعدم يقين CSI، ثم تثبيت مرجع طور الاستجابة المرغوبة على شبكة 4 بتات، مع سعة ثابتة وقدرة كلية واحدة. هذا تعريف PZF التجريبي هنا، وليس استنساخًا لخوارزمية hybrid phased-ZF المنشورة. التفاصيل والحدود في V2-Phase-Reference.md.
+
+لكل مستقبل CNN من ست كتل بعرض 48 وبوابتي انتباه خفيفتين. استُخدم الجذع السابق مع إعادة تدريب ورأس خرج ابتداؤه صفر. يتعلم تصحيح LMMSE وعدم يقينه؛ ليس ResNeSt-50. أعداد التدريب والتحقق الفعلية محفوظة في ملخص النموذج. استُخدمت 640 قناة تدريب و80 قناة تحقق لكل مستقبل، برقع محلية على 12RB ثم استدلال على 66RB.
+
+تبدأ بذور القنوات الجديدة للتدريب من 17 مليونًا، والتحقق من 18 مليونًا، وتحقق الحمولة المنفصل من 19 مليونًا. اختير معامل استقبال واحد من 0 أو0.5 أو1 لكل precoder على ثمانية أطر تحقق، قبل الاختبار. تبدأ بذور الاختبار من 50 مليونًا، مع {BATCHES} دفعات من {N} أطر لكل حجم محطة. لا تدخل القناة الحقيقية إلى المقدرات العملية أثناء الاختبار.
+
+منحنى CNN يعني LMMSE عند BS وتصحيح CNN عند UE بالمعامل المختار. بقي تصحيح شبكة المحطة ملغىً بعد رفضه في تحقق الحمولة السابق. إذا اختير معامل استقبال صفر، يتطابق المنحنيان عن قصد، ويُذكر ذلك في الجدول. لا يُدّعى تفوق مضمون على MMSE البايزي ذي الإحصاءات الصحيحة.
+
+تحتوي النتائج على {frames} إطار قناة مستقل لكل محطة، و{frames*U*A} بت حمولة لكل نقطة. BER محسوب بعد LDPC من جميع الحمولات، بما فيها الفاشلة. Goodput محسوب من الحمولات الصحيحة المجتازة CRC مقسومًا على زمن الإطارات الكامل، مع sounding والحراسة والمراجع. سقفه {CAP:g}Mbit/s، دون MAC أوHARQ. المعدل 1/8 نقطة تشغيل بحماية أقوى وسقف حمولة أقل؛ تحفظ نتائج 1/2 في حزمة مستقلة.
+
+الصفر المرصود في BER يُرسم بعلامة مفتوحة عند 1/Nbits لظهوره على المحور اللوغاريتمي؛ القيمة الأصلية صفر في CSV. Goodput صفري يعني عدم تسليم حمولة صحيحة ضمن العينة. لا توجد تسوية أو إجبار للمنحنيات على الانخفاض.
+
+## القيم عند 20dB
+
+| BS | Precoder | BER LS | BER LMMSE | BER CNN | BER Perfect CSI | Goodput CNN Mbit/s |
+|---|---|---|---|---|---|---|
+"""
+    for array,info in summary['arrays'].items():
+        for row in info['points']:
+            if row['snr']!=20:continue
+            b=row['BER'];text+=f"| {array} | {row['precoder']} | {b['LS']:.6g} | {b['LMMSE']:.6g} | {b['CNN']:.6g} | {b['Perfect CSI']:.6g} | {row['Goodput_Mbps']['CNN']:.6g} |\n"
+    text+='\n## معاملات CNN المجمدة\n\n| Precoder | معامل المحطة | معامل المستقبل من تحقق الحمولة | معامل المستقبل من تحقق القناة |\n|---|---|---|---|\n'
+    for precoder in PRECODERS:
+        a=model['Selection'][precoder]
+        text+=f"| {precoder} | {a[0]:g} | {a[1]:g} | {model['BlendRX'][precoder]:.6g} |\n"
+    text+='\nيعرض V3-paired-CNN-LMMSE.csv الفروق الزوجية وفترات ثقة نقطية بإعادة أخذ العينات على إطار القناة كاملًا. تحجب الفترة إذا اختلفت أقل من خمسة أطر. لا تصحح الفترات تعدد المقارنات عبر SNR. يربط Reference-Equation-Audit.md المعادلات بالتطبيق، ويحفظ V3-summary.json بصمات النماذج ومصدر كل دفعة.\n'
+    text+=f'\nالمصدر: https://github.com/Seraj21/cod3-matlab/tree/{args.source}\n\nالتشغيل: https://github.com/Seraj21/cod3-matlab/actions/runs/{args.run_id}\n'
+    return text
+
+def audit_configuration(path,array,batch,rate,model,e,f,version=2,seedbase=None):
     with zipfile.ZipFile(path) as archive:
         members=[n for n in archive.namelist() if Path(n).name=='mu_results.mat']
         assert len(members)==1
@@ -24,8 +61,18 @@ def audit_configuration(path,array,batch,rate,model,e,f):
         assert result['Config'][key]==value,(path.name,key,result['Config'][key],value)
     assert result['NumPackets']==N and result['PayloadBits']==A and result['CodedBits']==23760
     assert abs(result['FrameDuration']-T)<1e-15
-    seedbase=20000000 if rate==.5 else 30000000
+    if seedbase is None:seedbase=20000000 if rate==.5 else 30000000
     assert result['SeedOffset']==seedbase+batch*100000
+    if version==3:
+        assert result['Config']['Version']==6
+        assert result['Config']['PilotMode']=='DMRS+PTRS'
+        assert result['Config']['ReferenceObservationsPerLocalChannel']==22
+        assert result['Config']['PZFMode']=='robust SLNR, quantized desired-phase anchor'
+        assert result['PilotMode']=='DMRS+PTRS'
+        assert result['ObservedReferencesPerLocalChannel']==22
+        assert model['Version']==6 and model['TargetCodeRate']==rate
+        assert model['ReferencesPerLocalChannel']==22
+        assert model['AttentionGatesPerReceiver']==2
     np.testing.assert_array_equal(result['Config']['UplinkSymbols'],[1,2,3,4])
     np.testing.assert_array_equal(result['Config']['DownlinkSymbols'],np.arange(6,13))
     np.testing.assert_array_equal(result['Config']['PhaseNoiseLevel'],[-85,-100,-115])
@@ -38,17 +85,27 @@ def audit_configuration(path,array,batch,rate,model,e,f):
         np.testing.assert_array_equal(result['ModelSelection'][precoder],model['Selection'][precoder])
 
 def main():
-    global A,CAP
+    global A,CAP,N,BATCHES
     parser=argparse.ArgumentParser()
     parser.add_argument('--artifacts',type=Path,required=True)
     parser.add_argument('--output',type=Path,required=True)
     parser.add_argument('--run-id',type=int,required=True)
     parser.add_argument('--source',required=True)
     parser.add_argument('--recovery-run-id',type=int)
+    parser.add_argument('--version',type=int,choices=[2,3],default=2)
+    parser.add_argument('--frames-per-batch',type=int,default=16)
+    parser.add_argument('--batches',type=int,default=8)
+    parser.add_argument('--seed-base',type=int)
+    parser.add_argument('--model-artifact',default='v2-frozen-model.zip')
+    parser.add_argument('--model-summary',default='v2_model_summary.json')
     parser.add_argument('--rate',type=float,default=.5,choices=[.5,.25,.125])
     parser.add_argument('--artifact-prefix',default='v2-evaluation')
     parser.add_argument('--archive-name',default='MU-V2-Corrected-CNN-Results.zip')
     args=parser.parse_args();root=args.artifacts;out=args.output;out.mkdir(parents=True,exist_ok=True)
+    N=args.frames_per_batch;BATCHES=args.batches
+    assert N>0 and BATCHES>0
+    raw_audit.N=N;raw_audit.BATCHES=BATCHES
+    prefix=f'V{args.version}'
     catalog=json.loads((root/'GitHub-artifact-catalog.json').read_text())
     by_name={item['name']+'.zip':item for item in catalog}
     for path in root.glob('*.zip'):
@@ -58,8 +115,8 @@ def main():
     A=8*int(args.rate*23760/8);CAP=U*A/T/1e6
     raw_audit.A=A;raw_audit.CAP=CAP
     rate_label={.5:'1/2',.25:'1/4',.125:'1/8'}[args.rate]
-    with zipfile.ZipFile(root/'v2-frozen-model.zip') as frozen:
-        names=[name for name in frozen.namelist() if name.endswith('v2_model_summary.json')]
+    with zipfile.ZipFile(root/args.model_artifact) as frozen:
+        names=[name for name in frozen.namelist() if Path(name).name==args.model_summary]
         assert len(names)==1
         model=json.loads(frozen.read(names[0]))
         smoke=[n for n in frozen.namelist() if n.endswith('mu_results.mat')]
@@ -68,8 +125,9 @@ def main():
         assert len(reference_fingerprints)==1
         reference_fingerprint=reference_fingerprints.pop()
     fingerprints=set();allrows=[];paired=[]
-    summary={'run_id':args.run_id,'source':args.source,'model':model,'target_code_rate':args.rate,
+    summary={'version':args.version,'run_id':args.run_id,'source':args.source,'model':model,'target_code_rate':args.rate,
              'payload_bits_per_user':A,'maximum_goodput_Mbps':CAP,'arrays':{},
+             'frames_per_batch':N,'batches_per_array':BATCHES,'seed_base':args.seed_base,
              'recovery_run_id':args.recovery_run_id,'batch_provenance':[]}
     raw=out/'raw';raw.mkdir(exist_ok=True)
     rng=np.random.default_rng(925117)
@@ -79,11 +137,14 @@ def main():
         for batch in range(BATCHES):
             path=root/f'{args.artifact_prefix}-{array}-{batch}.zip'
             e,f,digest=read_batch(path,array);es.append(e);fs.append(f);fingerprints.add(digest)
-            audit_configuration(path,array,batch,args.rate,model,e,f)
+            audit_configuration(path,array,batch,args.rate,model,e,f,args.version,args.seed_base)
             with zipfile.ZipFile(path) as sourcezip:
                 member=next(n for n in sourcezip.namelist() if Path(n).name=='mu_results.mat')
                 metadata=loadmat(io.BytesIO(sourcezip.read(member)),variable_names=['result'],simplify_cells=True)['result']
             recovered='Recovery' in metadata
+            provenance=by_name[path.name]
+            assert provenance['run_id']==(args.recovery_run_id if recovered else args.run_id)
+            if not recovered:assert provenance['source']==args.source
             if recovered:
                 assert args.rate==.5 and args.recovery_run_id
                 assert (array,batch) in [(32,2),(32,3),(32,4),(32,5),(32,6),(64,1),(64,2),(64,5),(64,6)]
@@ -124,7 +185,7 @@ def main():
                         'Goodput_Mbps':dict(zip(ESTIMATORS,map(float,gp[s,p])))})
             for kind,values in [('BER',ber[:,p,:]),('Goodput',gp[:,p,:])]:
                 figure_for_series(SNRS,values,array,precoder,kind,bits,len(e),CAP,
-                    out/f'V2-{precoder}-{kind}-BS{array}.png',
+                    out/f'{prefix}-{precoder}-{kind}-BS{array}.png',
                     measured_label=f'Independent frozen-model simulation | LDPC target rate {rate_label}\nCNN curve: selected LMMSE at BS + learned CNN at UE')
         summary['arrays'][str(array)]={'frames':len(e),'payload_bits_per_point':bits,'points':points,
             'CNN_BER_better':int(np.count_nonzero(ber[:,:,2]<ber[:,:,1])),
@@ -134,15 +195,17 @@ def main():
     assert fingerprints=={reference_fingerprint},'Evaluation network weights differ from the frozen model smoke tests'
     summary['network_fingerprint']=fingerprints.pop()
     audit=audit_rows(allrows,SNRS);summary['plot_audit']=audit
-    writecsv(out/'V2-all-metrics.csv',allrows,FIELDS)
-    writecsv(out/'V2-paired-CNN-LMMSE.csv',paired)
-    writecsv(out/'V2-plot-audit.csv',audit)
+    writecsv(out/f'{prefix}-all-metrics.csv',allrows,FIELDS)
+    writecsv(out/f'{prefix}-paired-CNN-LMMSE.csv',paired)
+    writecsv(out/f'{prefix}-plot-audit.csv',audit)
     manifest=[]
     for path in sorted(root.glob('*.zip')):
-        if path.name.startswith(('v2-evaluation-','v2-robust-')) and not path.name.startswith(args.artifact_prefix+'-'):
+        if args.version==2 and path.name.startswith('v3-'):continue
+        if path.name.startswith(('v2-evaluation-','v2-robust-','v3-evaluation-')) and not path.name.startswith(args.artifact_prefix+'-'):
             continue
+        if path.name.startswith('v2-half-part-'):continue
         manifest.append({'file':path.name,'sha256':hashlib.sha256(path.read_bytes()).hexdigest()})
-        if path.name=='v2-frozen-model.zip':shutil.copy2(path,out/path.name)
+        if path.name==args.model_artifact:shutil.copy2(path,out/path.name)
         elif not path.name.startswith(args.artifact_prefix+'-'):
             with zipfile.ZipFile(path) as archive:
                 for member in archive.namelist():
@@ -150,19 +213,19 @@ def main():
                         target=out/'training'/path.stem/member
                         target.parent.mkdir(parents=True,exist_ok=True)
                         target.write_bytes(archive.read(member))
-    for name in ['V2-Reference-Sources.md','V2-Method-Review.md']:
+    for name in ['V2-Reference-Sources.md','V2-Method-Review.md','V2-Phase-Reference.md','Reference-Equation-Audit.md']:
         source=Path(__file__).resolve().parent.parent/name
         if source.exists():shutil.copy2(source,out/name)
     summary['artifacts']=manifest
     summary['checks']=['All local artifact SHA256 hashes match independently retrieved GitHub artifact metadata',
-        'All 16 ZIP archives passed CRC validation',
+        f'All {2*BATCHES} evaluation ZIP archives passed CRC validation',
         'Every CSV/MAT BER and goodput reproduced from individual user payload errors and CRC flags',
         'Every per-user CSV error and CRC flag agrees with the full MAT tensor',
         'Every MAT configuration, independent test seed, coding rate and precoder power matches the declared experiment',
         '31 SNR values for each of 24 estimator curves, with no missing or duplicate measurement',
-        'Four identical frozen CNN weight sets in all 16 jobs',
+        f'Four identical frozen CNN weight sets in all {2*BATCHES} batches',
         'No BER smoothing, sorting, forced monotonicity or substituted zero measurements']
-    (out/'V2-summary.json').write_text(json.dumps(summary,indent=2,ensure_ascii=False))
+    (out/f'{prefix}-summary.json').write_text(json.dumps(summary,indent=2,ensure_ascii=False))
     text='''# نتائج النسخة المصححة V2
 
 هذه نتائج محاكاة موجية زمنية لـTDL-C و512-QAM وLDPC بمعدل حمولة{RATE_LABEL}، مع محطة32 أو64 هوائيًا وثماني سلاسلRF وأربعة مستخدمين، لكل مستخدم أربعة هوائيات استقبال وطبقة واحدة.
@@ -186,7 +249,7 @@ def main():
 | BS | Precoder | BER LS | BER LMMSE | BER CNN | BER Perfect CSI | Goodput CNN Mbit/s |
 |---|---|---|---|---|---|---|
 '''
-    text=text.replace('{RATE_LABEL}',rate_label).replace('{BITS_PER_POINT}',str(N*BATCHES*U*A)).replace('{CEILING}',f'{CAP:g}')
+    text=text.replace('128 إطار قناة',f'{N*BATCHES} إطار قناة').replace('{RATE_LABEL}',rate_label).replace('{BITS_PER_POINT}',str(N*BATCHES*U*A)).replace('{CEILING}',f'{CAP:g}')
     if args.rate!=.5:
         note='هذه نقطة تشغيل منفصلة بحمايةLDPC أقوى. بقيت القناة والتعديل والمستخدمون وموارد المراجع وشبكاتCNN المجمدة نفسها. لم تُعد اختيار معاملاتCNN على هذه النتائج؛ اختيرت المعاملات مسبقًا على تحقق مستقل بمعدل1/2. انخفاض سقف الحمولة نتيجة صريحة لزيادة الحماية.'
         text=text.replace('## القيم عند20dB',note+'\n\n## القيم عند20dB')
@@ -205,7 +268,8 @@ def main():
         text+='\nتوقفت تسع دفعات أصلية عند حد الخادم90دقيقة؛ أُعيدت كل دفعة إلى جزأين من8أطر باستخدام المصدر الأصلي نفسه، والبذور نفسها، والأوزان المجمدة نفسها. أعيد تجميعها في ترتيب الأطر الأصلي مع التحقق من بصمات الشبكات. يحددV2-summary.json مصدر كل دفعة؛ لا يُحذف إطار متعثر ولا يعامل كقياس صفري.\n'
         text+=f'\nتشغيل استكمال الدفعات: https://github.com/Seraj21/cod3-matlab/actions/runs/{args.recovery_run_id}\n'
     text+=f'\nالمصدر المستخدم: https://github.com/Seraj21/cod3-matlab/tree/{args.source}\n\nالتشغيل: https://github.com/Seraj21/cod3-matlab/actions/runs/{args.run_id}\n'
-    (out/'V2-Review.md').write_text(text,encoding='utf-8')
+    if args.version==3:text=v3_review(summary,args)
+    (out/f'{prefix}-Review.md').write_text(text,encoding='utf-8')
     archive=out.parent/args.archive_name
     with zipfile.ZipFile(archive,'w',zipfile.ZIP_DEFLATED) as z:
         for p in sorted(out.rglob('*')):
