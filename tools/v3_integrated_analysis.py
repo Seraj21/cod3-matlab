@@ -178,22 +178,28 @@ def review(root, selection, output, p):
         t = aggregate(paired, p["payload_bits"])
         assert t.PayloadBits.eq(32 * frames * p["payload_bits"]).all() and t.Frames.eq(8 * frames).all()
         assert t.Goodput_Mbps.between(0, ceiling(p) + 1e-9).all()
+        assert ((t.CorrectTransportBlocks + t.Undetected) <= 4 * t.Frames).all()
         t.insert(0, "Precoder", precoder)
         results.append(t)
         final = t[t.Retry == retry]
-        assert not final.Undetected.any(), f"Undetected payload errors in {precoder}"
         plot_precoder(precoder, final, methods, figures, p)
         ber = final.pivot(index=["BS", "SNR_dB"], columns="Estimator", values="PostLDPC_BER")
         paired_final = paired[paired.Retry == retry]
+        false_accepts = paired_final.loc[paired_final.Undetected,
+                                         ["BS", "ChannelSeed", "SNR_dB", "Estimator", "UE", "Errors"]]
         average = final.groupby("Estimator")[["PostLDPC_BER", "Goodput_Mbps"]].mean()
         summary["Precoders"][precoder] = {
             "Average": average.to_dict("index"),
+            "CRCFalseAccepts": false_accepts.to_dict("records"),
             "CNNWinsAgainstMatchedLMMSE": int((ber[candidate] < ber["Aligned LMMSE"]).sum()),
             "CNNTiesAgainstMatchedLMMSE": int((ber[candidate] == ber["Aligned LMMSE"]).sum()),
             "PairedMeanBERGainCI95": paired_interval(paired_final, candidate, "Aligned LMMSE"),
             "At20dB": final[final.SNR_dB == 20].to_dict("records"),
         }
         print(precoder, "CNN:", candidate, "mean over 62 paired SNR/size points")
+        if not false_accepts.empty:
+            print("CRC false accepts excluded from delivered payload throughput:")
+            print(false_accepts.to_string(index=False))
         print(average.to_string())
         print(final[final.SNR_dB == 20][
             ["BS", "Estimator", "PayloadBitErrors", "CorrectTransportBlocks", "PostLDPC_BER", "Goodput_Mbps"]
