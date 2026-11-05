@@ -1,0 +1,41 @@
+name: Matched PZF CNN training
+on:
+  push:
+    branches: [mu-cnn-v2]
+    paths: [.github/workflows/v4_pzf_train.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  train:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - loss: matched
+            projection: 'false'
+          - loss: aligned
+            projection: 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 200
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: v3-refined-frozen-model
+          run-id: 41946464299
+          github-token: ${{ github.token }}
+          path: v3_refined
+      - uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2025b
+          products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
+      - uses: matlab-actions/run-command@v3
+        with:
+          command: run_v4_train_pzf('v4_train',${{ matrix.projection }});
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: v4-pzf-${{ matrix.loss }}
+          path: v4_train/
+          if-no-files-found: error
