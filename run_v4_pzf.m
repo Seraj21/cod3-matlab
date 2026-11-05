@@ -1,4 +1,4 @@
-function run_v4_pzf(antennas,frames,folder,snrDb,seedOffset,modelFile,modes,methods,tunedFile)
+function run_v4_pzf(antennas,frames,folder,snrDb,seedOffset,modelFile,modes,methods,matchedFile,alignedFile)
 % Paired PZF measurement. All practical candidates reuse a scene and noise.
 addpath(pwd,'mu_mimo','v2_mimo');
 if nargin<4,snrDb=[0:.5:10 11:20];end
@@ -6,17 +6,22 @@ if nargin<5,seedOffset=90000000;end
 if nargin<6,modelFile='v3_refined/v3_model.mat';end
 if nargin<7,modes="None";end
 if nargin<8,methods=["LS" "LMMSE" "V3 CNN" "Perfect CSI"];end
-if nargin<9,tunedFile="";end
+if nargin<9,matchedFile="";end
+if nargin<10,alignedFile="";end
 modes=string(modes);methods=string(methods);
 assert(all(ismember(modes,["None" "LBP50" "APP20" "CSI-APP20" "CSI-APP50"])));
-assert(all(ismember(methods,["LS" "LMMSE" "V3 CNN" "Tuned CNN" "Tuned CNN half" "Perfect CSI"])));
+assert(all(ismember(methods,["LS" "LMMSE" "Matched LMMSE" "V3 CNN" "Matched CNN" "Aligned CNN" "Perfect CSI"])));
 assert(all(diff(snrDb)>0) && min(snrDb)>=0 && max(snrDb)<=20);
 loaded=load(modelFile,'model');model=loaded.model;
 assert(model.Version==6 && model.Selection.PZF(1)==0);
 rx=model.Receivers.PZF;rx.BlendRX=rx.BlendRX*model.Selection.PZF(2);
-if any(startsWith(methods,"Tuned CNN"))
- loaded=load(tunedFile,'receiver');tuned=loaded.receiver;
- assert(isequal(tuned.Signature,model.Signature));
+if any(ismember(methods,["Matched LMMSE" "Matched CNN"]))
+ loaded=load(matchedFile,'receiver');matched=loaded.receiver;
+ assert(isequal(matched.Signature,model.Signature) && ~matched.ProjectionLoss);
+end
+if any(methods=="Aligned CNN")
+ loaded=load(alignedFile,'receiver');aligned=loaded.receiver;
+ assert(isequal(aligned.Signature,model.Signature) && aligned.ProjectionLoss);
 end
 cfg=v3Config(antennas);r=v3Resources(cfg);
 rows=cell(frames*numel(snrDb)*numel(methods)*numel(modes)*cfg.Users,13);at=0;
@@ -45,9 +50,12 @@ for frame=1:frames
      input=v3Receive(oracle,scene,r,snr,true,false);internal="Perfect";
     case "V3 CNN"
      internal="CNN";
-    case {"Tuned CNN","Tuned CNN half"}
-     receiver=tuned;internal="CNN";
-     if method=="Tuned CNN half",receiver.BlendRX=.5*receiver.BlendRX;end
+    case "Matched LMMSE"
+     receiver=matched;internal="LMMSE";
+    case "Matched CNN"
+     receiver=matched;internal="CNN";
+    case "Aligned CNN"
+     receiver=aligned;internal="CNN";
    end
    [h,v,observed]=v3EstimateRX(input,receiver,r,internal);input.Observed=observed;
    measureRetry=method~="Perfect CSI" && any(modes~="None");
