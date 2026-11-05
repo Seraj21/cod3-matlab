@@ -1,0 +1,33 @@
+name: V3 independent all-reference observation control
+on:
+  push:
+    branches: [mu-cnn-v2]
+    paths: [.github/workflows/v3_pilot_control.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  reference:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: v2-frozen-model
+          run-id: 41908344154
+          github-token: ${{ github.token }}
+          path: v2_frozen
+      - uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2025b
+          products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
+      - uses: matlab-actions/run-command@v3
+        with:
+          command: v3_reference_control;
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: v3-reference-control
+          path: v3_reference_control.csv
+          if-no-files-found: warn
