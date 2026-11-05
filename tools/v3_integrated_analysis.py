@@ -113,6 +113,10 @@ def plot_precoder(precoder, table, methods, out, p):
         fig, axes = plt.subplots(1, 2, sharey=True, figsize=(13.2, 5.55), layout="constrained")
         fig.suptitle(f"{precoder}  |  {title}\n{p['mhz']} MHz  ·  TDL-C  ·  512-QAM  ·  LDPC 1/8  ·  Four users",
                      fontsize=16, fontweight="semibold")
+        x_label = "SNR (dB)"
+        if slug == "BER":
+            x_label += "\n▽ Zero observed errors shown at one-error resolution"
+        fig.supxlabel(x_label, fontsize=11)
         for ax, bs in zip(axes, (32, 64)):
             group = table[table.BS == bs]
             for method, label, (color, marker, linestyle) in zip(methods, LABELS, STYLES):
@@ -131,7 +135,6 @@ def plot_precoder(precoder, table, methods, out, p):
             ax.set_title(f"{bs} BS antennas", fontsize=13)
             ax.set_xlim(0, 20)
             ax.set_xticks(range(0, 21, 2))
-            ax.set_xlabel("SNR (dB)")
             ax.set_ylabel(ylabel)
             ax.tick_params(axis="y", labelleft=True)
             if slug == "BER":
@@ -139,8 +142,6 @@ def plot_precoder(precoder, table, methods, out, p):
                 ax.set_ylim(.7 / group.PayloadBits.max(), 1.1)
                 ax.yaxis.set_major_locator(LogLocator(base=10, numticks=9))
                 ax.yaxis.set_major_formatter(LogFormatterMathtext(base=10))
-                ax.text(.02, .028, "▽  Zero observed errors at one-error resolution",
-                        transform=ax.transAxes, color="#444444", fontsize=9)
             else:
                 ax.set_ylim(0, 1.075 * ceiling(p))
             ax.grid(True, which="major", color="#cdd1d5", alpha=.8)
@@ -148,7 +149,7 @@ def plot_precoder(precoder, table, methods, out, p):
             if slug == "BER":
                 ax.legend(loc="lower left", bbox_to_anchor=(.02, .11), ncol=2, framealpha=.96)
             else:
-                ax.legend(loc="lower right", ncol=2, framealpha=.96)
+                ax.legend(loc="lower right", framealpha=.96)
         rank = PRECODERS.index(precoder) + (1 if slug == "BER" else 4)
         fig.savefig(out / f"{rank:02d}-{precoder}-{slug}.png", dpi=210, facecolor="white")
         plt.close(fig)
