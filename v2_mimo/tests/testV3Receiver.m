@@ -13,7 +13,7 @@ stream=RandStream('mt19937ar','Seed',773);H=complex(randn(stream,16,4),randn(str
 truth=repmat(reshape(H,1,1,16,4),r.K,r.L,1,1);
 observed=sum(truth.*reshape(r.ReferenceGrid,r.K,r.L,1,4),4);samples=v3PilotObservations(observed,r);
 for user=1:4
- p=r.DownlinkLayout{user};verifyEqual(testCase,p.Count,22);verifyEqual(testCase,p.NoiseGain,.25);
+ p=r.DownlinkLayout{user};verifyEqual(testCase,p.Count,22);verifyEqual(testCase,p.NoiseGain,.25,'AbsTol',1e-12);
  verifyEqual(testCase,p.Linear(:,p.Observed),eye(22),'AbsTol',1e-10);
  flat=reshape(samples(:,:,:,user),r.K*r.L,16);mask=abs(r.PTRS(:,:,user))>0;
  verifyEqual(testCase,flat(find(mask),:),repmat(H(:,user).',nnz(mask),1),'AbsTol',1e-12);

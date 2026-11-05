@@ -1,4 +1,5 @@
 name: V3 all-reference channel estimators and attention receivers
+# Normalize the analytically equal pilot-noise gains within floating-point tolerance.
 on:
   push:
     branches: [mu-cnn-v2]
