@@ -1,0 +1,109 @@
+name: Frozen PZF CNN and identical-waveform final test
+on:
+  push:
+    branches: [mu-cnn-v2]
+    paths: [.github/workflows/v4_pzf_final.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Wait for same-run replay and independent payload selection
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh run watch 42001461162 --repo "$GITHUB_REPOSITORY" --exit-status --interval 45
+          for attempt in $(seq 1 200); do
+            ready="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/42000390625/artifacts" --jq '.artifacts[] | select(.name == "v4-frozen-choice" and .expired == false) | .id')"
+            if [ -n "$ready" ]; then exit 0; fi
+            status="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/42000390625" --jq .status)"
+            if [ "$status" = completed ]; then exit 1; fi
+            sleep 45
+          done
+          exit 1
+  evaluate:
+    needs: gate
+    strategy:
+      fail-fast: false
+      matrix:
+        antennas: [32, 64]
+        batch: [0, 1, 2, 3, 4, 5, 6, 7]
+    runs-on: ubuntu-latest
+    timeout-minutes: 160
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: v4-frozen-choice
+          run-id: 42000390625
+          github-token: ${{ github.token }}
+          path: frozen_choice
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: v4-pzf-*
+          run-id: 41999639429
+          github-token: ${{ github.token }}
+          path: models
+      - uses: actions/download-artifact@v8
+        with:
+          name: v3-refined-frozen-model
+          run-id: 41946464299
+          github-token: ${{ github.token }}
+          path: v3_refined
+      - uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2025b
+          products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
+      - uses: matlab-actions/run-command@v3
+        with:
+          command: run_v4_frozen_pzf(${{ matrix.antennas }},${{ matrix.batch }},"test");
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: v4-independent-test-${{ matrix.antennas }}-${{ matrix.batch }}
+          path: v4_measurement/
+          if-no-files-found: error
+  review:
+    needs: evaluate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: v4-frozen-choice
+          run-id: 42000390625
+          github-token: ${{ github.token }}
+          path: frozen_choice
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: v4-independent-test-*
+          path: v4_tests
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: v4-pzf-*
+          run-id: 41999639429
+          github-token: ${{ github.token }}
+          path: models
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: v4-component-*
+          run-id: 42000765319
+          github-token: ${{ github.token }}
+          path: component_ablation
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: |
+          python -m pip install numpy pandas matplotlib
+          python tools/v4_pzf_analysis.py report v4_tests frozen_choice/pzf_selection.json v4_review --components component_ablation
+          cp -r models v4_review/
+          cp V4-Reproduce.md v4_review/
+      - uses: actions/upload-artifact@v7
+        with:
+          name: v4-pzf-reviewed-results
+          path: v4_review/
+          if-no-files-found: error

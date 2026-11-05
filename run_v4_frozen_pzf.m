@@ -8,7 +8,8 @@ else
  assert(stage=="test");
  choice=jsondecode(fileread('frozen_choice/pzf_selection.json'));
  modes=unique(["None" string(choice.common_receiver.retry)],'stable');
- methods=unique(["LS" "LMMSE" "Matched LMMSE" "V3 CNN" string(choice.cnn) "Perfect CSI"],'stable');
+ methods=unique(["LS" "LS on common packet" "LMMSE" "Matched LMMSE" "V3 CNN" ...
+  string(choice.cnn) "Perfect CSIR" "Perfect CSI"],'stable');
  points=[0:.5:10 11:20];seed=90000000;
 end
 run_v4_pzf(antennas,4,'v4_measurement',points,seed+batch*100000, ...

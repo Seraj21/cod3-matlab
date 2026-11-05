@@ -20,6 +20,7 @@ VALIDATION = ORIGINAL[:3] + ["Matched LMMSE", "Matched CNN", "Aligned CNN"]
 CALIBRATION_SNR = [0, 4, 8, 12, 16, 20]
 VALIDATION_SNR = list(range(0, 21, 2))
 TEST_SNR = list(np.arange(0, 10.5, 0.5)) + list(range(11, 21))
+COMPONENT_RETRIES = ["None", "NMS50", "LBP50", "APP50", "CSI-APP50"]
 SLOT_SECONDS = 0.00025
 PAYLOAD_BITS = 2968
 KEYS = ["BS", "ChannelSeed", "SNR_dB", "Estimator", "UE"]
@@ -168,8 +169,10 @@ def figures(table, methods, choice, output):
     plt.rcParams.update({"font.size": 12, "axes.labelsize": 13, "legend.fontsize": 11})
     styles = {
         "LS": ("#a0522d", "s", "-"), "LMMSE": ("#377eb8", "^", "-"),
+        "LS on common packet": ("#a0522d", "s", "-"),
         "Matched LMMSE": ("#5c6d9b", "v", "--"), "V3 CNN": ("#4c9077", "d", "--"),
-        "Perfect CSI": ("#353535", "x", ":"), choice: ("#d02e3e", "o", "-"),
+        "Perfect CSI": ("#353535", "x", ":"), "Perfect CSIR": ("#353535", "x", ":"),
+        choice: ("#d02e3e", "o", "-"),
     }
     for bs in [32, 64]:
         subset = table[table.BS == bs]
@@ -181,7 +184,9 @@ def figures(table, methods, choice, output):
             for method in methods:
                 values = subset[subset.Estimator == method].sort_values("SNR_dB")
                 color, mark, linestyle = styles[method]
-                label = "CNN" if method == choice else method
+                label = {"LS on common packet": "LS", "Perfect CSIR": "Perfect CSI at UE"}.get(method, method)
+                if method == choice:
+                    label = "CNN"
                 y = values[metric].to_numpy()
                 if tag == "ber":
                     zero = y == 0
@@ -216,14 +221,25 @@ def figures(table, methods, choice, output):
             plt.close(fig)
 
 
-def report(root, config, output):
+def components_report(root, output):
+    rows = load_rows(root)
+    methods = ["LS on common packet", "LMMSE", "V3 CNN"]
+    check_design(rows, seeds(75000000, 2), CALIBRATION_SNR, methods, COMPONENT_RETRIES)
+    table = aggregate(rows)
+    table.to_csv(output / "receiver_component_metrics.csv", index=False)
+    score = scores(rows, "Retry", COMPONENT_RETRIES).loc[COMPONENT_RETRIES]
+    return score.drop(columns="order").reset_index().to_dict("records")
+
+
+def report(root, config, output, components=None):
     choice = json.loads(Path(config).read_text())
     cnn = choice["cnn"]
     retry = choice["common_receiver"]["retry"]
     modes = list(dict.fromkeys(["None", retry]))
-    methods = list(dict.fromkeys(["LS", "LMMSE", "Matched LMMSE", "V3 CNN", cnn, "Perfect CSI"]))
+    methods = list(dict.fromkeys(["LS on common packet", "LMMSE", "Matched LMMSE",
+                                  "V3 CNN", cnn, "Perfect CSIR"]))
     rows = load_rows(root)
-    check_design(rows, seeds(90000000, 8), TEST_SNR, methods, modes)
+    check_design(rows, seeds(90000000, 8), TEST_SNR, methods + ["LS", "Perfect CSI"], modes)
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
     rows.to_csv(output / "pzf_paired_slots.csv", index=False)
@@ -233,7 +249,7 @@ def report(root, config, output):
     final_rows = rows[rows.Retry == retry]
     curves = chosen.pivot(index=["BS", "SNR_dB"], columns="Estimator", values="PostLDPC_BER")
     comparison = {}
-    for control in ["LS", "LMMSE", "Matched LMMSE", "V3 CNN"]:
+    for control in [methods[0], "LMMSE", "Matched LMMSE", "V3 CNN"]:
         if control == cnn:
             continue
         comparison[control] = {
@@ -247,17 +263,22 @@ def report(root, config, output):
     sources = {}
     for path in sorted(Path("models").rglob("pzf_receiver.mat")):
         sources[path.parent.name] = hashlib.sha256(path.read_bytes()).hexdigest()
+    goodput = chosen.pivot(index=["BS", "SNR_dB"], columns="Estimator", values="Goodput_Mbps")
     summary = {
         "configuration": choice, "frames_per_array": 32, "SNR_dB": TEST_SNR,
+        "same_packet_reference": True,
         "one_error_resolution": 1 / (32 * 4 * PAYLOAD_BITS),
         "maximum_goodput_Mbps": 4 * PAYLOAD_BITS / (SLOT_SECONDS * 1e6),
         "comparisons": comparison, "receiver_model_sha256": sources,
         "undetected_blocks": int(final_rows.Undetected.sum()),
         "at_20_dB": chosen[chosen.SNR_dB == 20].to_dict("records"),
+        "goodput_at_test_points": goodput.reset_index().to_dict("records"),
     }
+    if components is not None:
+        summary["receiver_component_ablation"] = components_report(components, output)
     write_json(output / "pzf_review.json", summary)
     figures(chosen, methods, cnn, output)
-    print(json.dumps(summary, indent=2))
+    print(json.dumps({k: v for k, v in summary.items() if k != "goodput_at_test_points"}, indent=2))
 
 
 def main():
@@ -272,6 +293,8 @@ def main():
         command = sub.add_parser(name)
         for arg in args:
             command.add_argument(arg)
+        if name == "report":
+            command.add_argument("--components")
     params = vars(parser.parse_args())
     stage = params.pop("stage")
     {"receiver": select_receiver, "select": select_cnn, "replay": replay, "report": report}[stage](**params)

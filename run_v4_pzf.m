@@ -48,6 +48,7 @@ for frame=1:frames
  end
  for snr=snrDb
   commonInput=v3Receive(common,scene,r,snr,false,false);
+  oracleChannel=commonInput.Truth;commonInput.Truth=[];
   for method=methods
    input=commonInput;receiver=rx;internal=method;
    switch method
@@ -56,7 +57,7 @@ for frame=1:frames
     case "LS on common packet"
      internal="LS";
     case "Perfect CSIR"
-     internal="Perfect";
+     input.Truth=oracleChannel;internal="Perfect";
     case "Perfect CSI"
      input=v3Receive(oracle,scene,r,snr,true,false);internal="Perfect";
     case "V3 CNN"
