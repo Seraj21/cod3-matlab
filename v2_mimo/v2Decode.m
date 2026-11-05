@@ -1,12 +1,13 @@
-function [errors,failed,details]=v2Decode(input,h,variance,payload,cfg,r)
+function [errors,failed,details,primary]=v2Decode(input,h,variance,payload,cfg,r)
 % Both candidates use receiver information only. CRC selects a successful retry.
 users=true(1,cfg.Users);
 if isfield(cfg,'ActiveUsers'),users(:)=false;users(cfg.ActiveUsers)=true;end
-[bits,failed,details]=pass(input,h,variance,cfg,r,false,users);
+capture=nargout>3;
+[bits,failed,details,primary]=pass(input,h,variance,cfg,r,false,users,capture);
 failed(~users)=false;
 firstFailed=failed;
 if cfg.DecoderDual && any(failed)
- [retry,retryFailed,retryDetails]=pass(input,h,variance,cfg,r,true,failed);
+ [retry,retryFailed,retryDetails]=pass(input,h,variance,cfg,r,true,failed,false);
  accepted=failed & ~retryFailed;
  bits(:,accepted)=retry(:,accepted);failed(accepted)=false;
  details.MeanEffectiveVariance(accepted)=retryDetails.MeanEffectiveVariance(accepted);
@@ -16,10 +17,18 @@ else
 end
 details.Retried=firstFailed;
 errors=sum(bits~=payload,1);
+if capture,primary.Decoded=bits;end
 end
-function [decoded,failed,details]=pass(input,h,channelVariance,cfg,r,fixedBeam,users)
+function [decoded,failed,details,primary]=pass(input,h,channelVariance,cfg,r,fixedBeam,users,capture)
 decoded=zeros(r.PayloadBits,cfg.Users,'int8');failed=true(1,cfg.Users);
 evm=zeros(1,cfg.Users);
+primary=struct;
+if capture
+ primary.Symbols=zeros(numel(r.DataIndices),cfg.Users,'like',input.Observed);
+ primary.Variance=zeros(numel(r.DataIndices),cfg.Users);
+ primary.ChannelError=zeros(numel(r.DataIndices),cfg.Users);
+ primary.LLR=zeros(r.CodedBits,cfg.Users);
+end
 for u=find(users)
  rows=(u-1)*cfg.UERx+(1:cfg.UERx);
  if fixedBeam,rows=rows(1);end % The first unitary receive beam is the SRS beam.
@@ -62,7 +71,22 @@ for u=find(users)
      'UnitAveragePower',true,'NoiseVariance',1);
  llr=reshape(reshape(llr,cfg.Qm,[])./reshape(effectiveVariance,1,[]),[],1);
  restored=zeros(r.CodedBits,1);restored(r.BitOrder)=llr;
- [decoded(:,u),failed(u)]=r.Codec.decode(max(-50,min(50,restored)));
+ restored=max(-50,min(50,restored));
+ [decoded(:,u),failed(u)]=r.Codec.decode(restored);
+ if capture
+  % Project the desired-channel error through the same receive combiner.
+  squaredWeights=abs(w).^2;
+  errorVariance=permute(channelVariance(:,:,rows,u),[3 4 1 2]);
+  thermal=reshape(input.Noise(rows),R,1);
+  projected=reshape(sum(squaredWeights.*errorVariance,1)./alphaPower,r.K,r.L);
+  thermal=reshape(sum(squaredWeights.*thermal,1)./alphaPower,r.K,r.L);
+  headroom=max(0,postNoise-thermal);
+  projected=min(max(projected,0),headroom);
+  primary.Symbols(:,u)=equalized(r.DataIndices);
+  primary.Variance(:,u)=effectiveVariance;
+  primary.ChannelError(:,u)=projected(r.DataIndices);
+  primary.LLR(:,u)=restored;
+ end
  evm(u)=mean(effectiveVariance);
 end
 details=struct('MeanEffectiveVariance',evm);

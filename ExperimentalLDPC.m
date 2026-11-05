@@ -55,7 +55,9 @@ classdef ExperimentalLDPC
                 first = first+E;
             end
         end
-        function [payload,crcFailed] = decode(obj,llr)
+        function [payload,crcFailed,iterations] = decode(obj,llr,maxIterations,algorithm)
+            if nargin < 3, maxIterations = 20; end
+            if nargin < 4, algorithm = 'Normalized min-sum'; end
             assert(numel(llr)==obj.CodedBits);
             recovered = zeros(size(obj.FillerMask));
             first = 1;
@@ -68,8 +70,8 @@ classdef ExperimentalLDPC
                 first = first+E;
             end
             recovered(obj.FillerMask) = Inf;
-            segments = nrLDPCDecode(recovered,obj.Info.BGN,20, ...
-                'Algorithm','Normalized min-sum','ScalingFactor',0.75);
+            [segments,iterations] = nrLDPCDecode(recovered,obj.Info.BGN,maxIterations, ...
+                'Algorithm',algorithm);
             [attached,blockErrors] = nrCodeBlockDesegmentLDPC(segments,obj.Info.BGN, ...
                 obj.PayloadBits+obj.Info.L);
             [payload,transportError] = nrCRCDecode(attached,obj.Info.CRC);
