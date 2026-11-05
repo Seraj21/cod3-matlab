@@ -1,0 +1,37 @@
+name: V2 effective-channel phase-reference controls
+on:
+  push:
+    branches: [mu-cnn-v2]
+    paths: [.github/workflows/v2_gauge.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  diagnose:
+    strategy:
+      fail-fast: false
+      matrix:
+        antennas: [32, 64]
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: v2-frozen-model
+          run-id: 41908344154
+          github-token: ${{ github.token }}
+          path: v2_frozen
+      - uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2025b
+          products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
+      - uses: matlab-actions/run-command@v3
+        with:
+          command: addpath(pwd);results=runtests({'v2_mimo/tests/testV2RobustPhase.m','v2_mimo/tests/testV2PhaseGauge.m'});assertSuccess(results);v2_gauge_control(${{ matrix.antennas }});
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: v2-gauge-control-${{ matrix.antennas }}
+          path: v2_gauge_control.csv
+          if-no-files-found: warn
