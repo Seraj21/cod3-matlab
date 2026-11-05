@@ -2,10 +2,10 @@
 
 تحتاج MATLAB R2025b مع Communications Toolbox و5G Toolbox وDeep Learning Toolbox. نُفذت التجربة على CPU. تحتوي حزمة النماذج المجمدة على الشبكات وإحصاءات القناة ومعاملات الاختيار؛ لا يلزم إعادة التدريب لإعادة الاختبار.
 
-ضع `MU-V3-Frozen-CNN-Models.zip` في جذر المستودع، ثم:
+ضع ملف النماذج `v3-refined-frozen-model.zip` في جذر المستودع، ثم:
 
 ```matlab
-unzip('MU-V3-Frozen-CNN-Models.zip','v3_refined');
+unzip('v3-refined-frozen-model.zip','v3_refined');
 snrDb = [0:.5:10 11:20];
 for bs = [32 64]
     for batch = 0:7
