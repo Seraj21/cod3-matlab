@@ -1,0 +1,143 @@
+name: Package the complete 200 MHz V3 experiment
+on:
+  push:
+    branches: [mu-cnn-v2]
+    paths: [.github/workflows/v3_integrated_package.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          ref: 2179a71828cd08c2a7fc911b4d9f19b943b46a4b
+          path: source_snapshot
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: integrated-test-*
+          run-id: 42020849873
+          github-token: ${{ github.token }}
+          path: delivery/measurements/test
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: integrated-validation-*
+          run-id: 42020849873
+          github-token: ${{ github.token }}
+          path: delivery/measurements/validation
+      - uses: actions/download-artifact@v8
+        with:
+          name: integrated-selection
+          run-id: 42020849873
+          github-token: ${{ github.token }}
+          path: delivery/integrated_selection
+      - uses: actions/download-artifact@v8
+        with:
+          name: V3-Integrated-Audit
+          run-id: 42020849873
+          github-token: ${{ github.token }}
+          path: original_audit
+      - uses: actions/download-artifact@v8
+        with:
+          name: v3-refined-frozen-model
+          run-id: 41946464299
+          github-token: ${{ github.token }}
+          path: delivery/v3_refined
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: v3-integrated-receiver-*
+          run-id: 42018082199
+          github-token: ${{ github.token }}
+          path: trained
+      - uses: actions/download-artifact@v8
+        with:
+          name: v4-pzf-aligned
+          run-id: 41999639429
+          github-token: ${{ github.token }}
+          path: trained/v3-integrated-receiver-PZF
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Recompute, cross-check and assemble
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          python -m pip install numpy pandas matplotlib scipy
+          mkdir -p delivery/{integrated_receiver,training,tools,docs}
+          cp -r source_snapshot/{mu_mimo,v2_mimo} delivery/
+          cp source_snapshot/{ExperimentalLDPC,run_v3_integrated,run_v3_mimo,run_v4_pzf,run_v4_train_pzf}.m delivery/
+          cp source_snapshot/tools/{v3_integrated_analysis,v4_pzf_analysis}.py delivery/tools/
+          cp V3-Complete-README.md delivery/README.md
+          cp source_snapshot/.github/workflows/v3_integrated.yml delivery/docs/v3_integrated.yml
+          for scheme in ZF PZF MR; do
+            lower="$(printf '%s' "$scheme" | tr '[:upper:]' '[:lower:]')"
+            trained="trained/v3-integrated-receiver-$scheme"
+            cp "$trained/${lower}_receiver.mat" delivery/integrated_receiver/
+            mkdir -p "delivery/training/$scheme"
+            cp "$trained/conditions.csv" "$trained/learning.csv" "delivery/training/$scheme/"
+          done
+          python delivery/tools/v3_integrated_analysis.py freeze delivery/measurements/validation checked_selection.json --rb 264
+          python delivery/tools/v3_integrated_analysis.py review delivery/measurements/test delivery/integrated_selection/selection.json delivery/results --rb 264
+          for run in 42020849873 42018082199 41999639429 41946464299; do
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/artifacts?per_page=100" > "artifact-origins-$run.json"
+          done
+          python - <<'PY'
+          from importlib.metadata import version
+          from pathlib import Path
+          import hashlib
+          import json
+          import pandas as pd
+
+          root = Path("delivery")
+          choice = json.loads((root / "integrated_selection/selection.json").read_text())
+          assert choice == json.loads(Path("checked_selection.json").read_text())
+          for name, count in (("metrics.csv", 1860), ("paired_user_blocks.csv", 119040)):
+              actual = pd.read_csv(root / "results" / name, keep_default_na=False)
+              original = pd.read_csv(Path("original_audit") / name, keep_default_na=False)
+              assert len(actual) == count
+              pd.testing.assert_frame_equal(actual, original, check_exact=True)
+
+          assert (root / "v3_refined/v3_model.mat").is_file()
+          assert len(list((root / "integrated_receiver").glob("*_receiver.mat"))) == 3
+          assert len(list((root / "results/figures").glob("*.png"))) == 6
+          packages = ("numpy", "pandas", "matplotlib", "scipy")
+          (root / "requirements.txt").write_text("".join(f"{p}=={version(p)}\n" for p in packages))
+
+          source_runs = {
+              42020849873: lambda name: name.startswith(("integrated-test-", "integrated-validation-"))
+                  or name in {"integrated-selection", "V3-Integrated-Audit"},
+              42018082199: lambda name: name.startswith("v3-integrated-receiver-"),
+              41999639429: lambda name: name == "v4-pzf-aligned",
+              41946464299: lambda name: name == "v3-refined-frozen-model",
+          }
+          manifest = {
+              "SourceSnapshot": "2179a71828cd08c2a7fc911b4d9f19b943b46a4b",
+              "MeasurementCommit": "9aa838cb9ce6c8f7b5244129a4b22185f3f696c6",
+              "ArtifactOrigins": [],
+          }
+          for run, keep in source_runs.items():
+              artifacts = json.loads(Path(f"artifact-origins-{run}.json").read_text())["artifacts"]
+              for artifact in sorted(artifacts, key=lambda a: a["name"]):
+                  if keep(artifact["name"]):
+                      manifest["ArtifactOrigins"].append({
+                          "run": run, "id": artifact["id"], "name": artifact["name"],
+                          "sha256": artifact["digest"].removeprefix("sha256:"),
+                      })
+          assert len(manifest["ArtifactOrigins"]) == 78
+          (root / "docs/provenance.json").write_text(json.dumps(manifest, indent=2) + "\n")
+          records = []
+          for path in sorted(root.rglob("*")):
+              if path.is_file():
+                  records.append(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.relative_to(root).as_posix()}")
+          (root / "SHA256SUMS.txt").write_text("\n".join(records) + "\n")
+          print(f"Validated {len(records)} packaged files against the frozen 200 MHz experiment.")
+          PY
+      - uses: actions/upload-artifact@v7
+        with:
+          name: V3-Integrated-200MHz-Complete
+          path: delivery/
+          if-no-files-found: error
