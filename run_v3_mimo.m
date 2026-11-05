@@ -1,4 +1,4 @@
-function run_v3_mimo(antennas,frames,folder,snrDb,seedOffset,modelFile,methodIndices)
+function run_v3_mimo(antennas,frames,folder,snrDb,seedOffset,modelFile,methodIndices,receiverOptions)
 if nargin<4,snrDb=[0:.5:10 11:20];end
 if nargin<5,seedOffset=50000000;end
 if nargin<6
@@ -6,6 +6,11 @@ if nargin<6
  if isfile('v3_refined/v3_model.mat'),modelFile='v3_refined/v3_model.mat';end
 end
 if nargin<7,methodIndices=1:4;end
+if nargin>=8 && ~isempty(receiverOptions)
+ run_v4_pzf(antennas,frames,folder,snrDb,seedOffset,modelFile, ...
+  receiverOptions.RetryModes,receiverOptions.Methods,"",receiverOptions.AlignedModel,receiverOptions.Precoder);
+ return
+end
 addpath(pwd,'mu_mimo','v2_mimo');load(modelFile,'model');assert(model.Version==6);
 cfg=v3Config(antennas);r=v3Resources(cfg);
 expected=struct('Users',cfg.Users,'UERx',cfg.UERx,'RFChains',cfg.RFChains,'Qm',cfg.Qm,'M',cfg.M, ...

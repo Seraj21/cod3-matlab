@@ -26,7 +26,7 @@ PAYLOAD_BITS = 2968
 KEYS = ["BS", "ChannelSeed", "SNR_dB", "Estimator", "UE"]
 
 
-def load_rows(root):
+def load_rows(root, keys=KEYS):
     files = sorted(Path(root).rglob("pzf_slots.csv"))
     assert files, f"No measurements in {root}"
     rows = pd.concat(
@@ -45,7 +45,7 @@ def load_rows(root):
     assert rows.Errors.between(0, PAYLOAD_BITS).all()
     assert rows.BaselineErrors.between(0, PAYLOAD_BITS).all()
     assert rows.ExtraIterations.between(0, 100).all()
-    assert not rows.duplicated(KEYS + ["Retry"]).any()
+    assert not rows.duplicated(keys + ["Retry"]).any()
     unchanged = (~rows.BaselineCRCFailed) | (rows.Retry == "None") | (
         rows.Estimator == "Perfect CSI"
     ) | rows.CRCFailed
@@ -54,7 +54,7 @@ def load_rows(root):
         rows.loc[unchanged, "BaselineCRCFailed"]
     ).all()
     assert not rows.loc[~rows.BaselineCRCFailed, "ExtraIterations"].any()
-    baseline = rows.groupby(KEYS)[["BaselineErrors", "BaselineCRCFailed"]].nunique()
+    baseline = rows.groupby(keys)[["BaselineErrors", "BaselineCRCFailed"]].nunique()
     assert baseline.eq(1).all().all()
     return rows
 

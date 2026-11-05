@@ -1,0 +1,179 @@
+name: Integrated V3 BER and throughput for MR ZF PZF
+on:
+  push:
+    branches: [mu-cnn-v2]
+    paths: [.github/workflows/v3_integrated.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  training-ready:
+    runs-on: ubuntu-latest
+    timeout-minutes: 140
+    steps:
+      - name: Wait for both deployment-matched networks
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run watch 42018082199 --repo "$GITHUB_REPOSITORY" --exit-status --interval 45
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: v3-refined-frozen-model
+          run-id: 41946464299
+          github-token: ${{ github.token }}
+          path: v3_refined
+      - uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2025b
+          products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
+      - uses: matlab-actions/run-command@v3
+        with:
+          command: addpath('mu_mimo','v2_mimo');v4ReceiverSelfTest;for p=["MR" "ZF" "PZF"],o=struct('Precoder',p,'RetryModes',["APP50" "CSI-APP50"],'Methods',["LS on common packet" "Perfect CSIR"],'AlignedModel',"");run_v3_mimo(32,1,fullfile('smoke',p),[0 20],78000000,'v3_refined/v3_model.mat',[],o);end
+  validation:
+    needs: [training-ready, smoke]
+    strategy:
+      fail-fast: false
+      matrix:
+        precoder: [MR, ZF, PZF]
+        antennas: [32, 64]
+        batch: [0, 1, 2, 3]
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: v3-refined-frozen-model
+          run-id: 41946464299
+          github-token: ${{ github.token }}
+          path: v3_refined
+      - uses: actions/download-artifact@v8
+        if: matrix.precoder != 'PZF'
+        with:
+          name: v3-integrated-receiver-${{ matrix.precoder }}
+          run-id: 42018082199
+          github-token: ${{ github.token }}
+          path: integrated_receiver
+      - uses: actions/download-artifact@v8
+        if: matrix.precoder == 'PZF'
+        with:
+          name: v4-pzf-aligned
+          run-id: 41999639429
+          github-token: ${{ github.token }}
+          path: integrated_receiver
+      - uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2025b
+          products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
+      - uses: matlab-actions/run-command@v3
+        with:
+          command: run_v3_integrated("${{ matrix.precoder }}",${{ matrix.antennas }},${{ matrix.batch }},"validation");
+      - uses: actions/upload-artifact@v7
+        with:
+          name: integrated-validation-${{ matrix.precoder }}-${{ matrix.antennas }}-${{ matrix.batch }}
+          path: integrated_measurement/
+          if-no-files-found: error
+  freeze:
+    needs: validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: integrated-validation-*
+          path: validation
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: |
+          python -m pip install numpy pandas matplotlib scipy
+          python tools/v3_integrated_analysis.py freeze validation integrated_selection/selection.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: integrated-selection
+          path: integrated_selection/
+          if-no-files-found: error
+  evaluate:
+    needs: freeze
+    strategy:
+      fail-fast: false
+      matrix:
+        precoder: [MR, ZF, PZF]
+        antennas: [32, 64]
+        batch: [0, 1, 2, 3, 4, 5, 6, 7]
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: integrated-selection
+          path: integrated_selection
+      - uses: actions/download-artifact@v8
+        with:
+          name: v3-refined-frozen-model
+          run-id: 41946464299
+          github-token: ${{ github.token }}
+          path: v3_refined
+      - uses: actions/download-artifact@v8
+        if: matrix.precoder != 'PZF'
+        with:
+          name: v3-integrated-receiver-${{ matrix.precoder }}
+          run-id: 42018082199
+          github-token: ${{ github.token }}
+          path: integrated_receiver
+      - uses: actions/download-artifact@v8
+        if: matrix.precoder == 'PZF'
+        with:
+          name: v4-pzf-aligned
+          run-id: 41999639429
+          github-token: ${{ github.token }}
+          path: integrated_receiver
+      - uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2025b
+          products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
+      - uses: matlab-actions/run-command@v3
+        with:
+          command: run_v3_integrated("${{ matrix.precoder }}",${{ matrix.antennas }},${{ matrix.batch }},"test");
+      - uses: actions/upload-artifact@v7
+        with:
+          name: integrated-test-${{ matrix.precoder }}-${{ matrix.antennas }}-${{ matrix.batch }}
+          path: integrated_measurement/
+          if-no-files-found: error
+  review:
+    needs: evaluate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: integrated-selection
+          path: integrated_selection
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: integrated-test-*
+          path: integrated_tests
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: |
+          python -m pip install numpy pandas matplotlib scipy
+          python tools/v3_integrated_analysis.py review integrated_tests integrated_selection/selection.json integrated_review
+      - uses: actions/upload-artifact@v7
+        with:
+          name: V3-Integrated-Results
+          path: integrated_review/figures/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          name: V3-Integrated-Audit
+          path: |
+            integrated_review/metrics.csv
+            integrated_review/paired_user_blocks.csv
+            integrated_review/summary.json
+          if-no-files-found: error
