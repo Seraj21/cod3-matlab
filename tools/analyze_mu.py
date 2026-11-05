@@ -35,7 +35,9 @@ def fingerprint(v):
         h.update(str(z.shape).encode());h.update(z.dtype.str.encode())
         h.update(z.tobytes(order="F"))
     return h.hexdigest()
-def read_batch(path,array):
+def read_batch(path,array,estimators=None):
+    estimator_names=ESTIMATORS if estimators is None else estimators
+    methods=len(estimator_names)
     with zipfile.ZipFile(path) as archive:
         assert archive.testzip() is None
         def member(name):
@@ -47,14 +49,14 @@ def read_batch(path,array):
         mat=loadmat(io.BytesIO(member("mu_results.mat")),
             variable_names=["bitErrors","totalBits","ber","success","goodput",
                             "maximumGoodput","cnnFingerprint"])
-    shape=(N,len(SNRS),3,4,U)
+    shape=(N,len(SNRS),3,methods,U)
     e=np.full(shape,-1,dtype=np.int64)
     fail=np.zeros(shape,dtype=bool)
     for row in raw:
         p=int(row["Packet"])-1;u=int(row["User"])-1
         s=np.flatnonzero(SNRS==float(row["SNR_dB"]))
         assert len(s)==1
-        j=PRECODERS.index(row["Precoder"]);k=ESTIMATORS.index(row["Estimator"])
+        j=PRECODERS.index(row["Precoder"]);k=estimator_names.index(row["Estimator"])
         ix=(p,int(s[0]),j,k,u)
         assert 0<=p<N and 0<=u<U and e[ix]==-1
         value=int(row["PayloadBitErrors"])
@@ -64,15 +66,15 @@ def read_batch(path,array):
     errors=e.sum(axis=(0,4))
     bits=N*U*A
     correct=((e==0)&~fail).sum(axis=(0,4))
-    close(mat["bitErrors"],errors);close(mat["ber"],errors/bits)
-    close(mat["totalBits"],np.full_like(errors,bits))
-    close(mat["success"],correct);close(mat["goodput"],correct*A/(N*T)/1e6)
+    close(mat["bitErrors"].reshape(errors.shape),errors);close(mat["ber"].reshape(errors.shape),errors/bits)
+    close(mat["totalBits"].reshape(errors.shape),np.full_like(errors,bits))
+    close(mat["success"].reshape(errors.shape),correct);close(mat["goodput"].reshape(errors.shape),correct*A/(N*T)/1e6)
     close(mat["maximumGoodput"].item(),CAP)
-    assert len(metric)==len(SNRS)*3*4
+    assert len(metric)==len(SNRS)*3*methods
     seen_metrics=set()
     for row in metric:
         ix=(int(np.flatnonzero(SNRS==float(row["SNR_dB"]))[0]),
-            PRECODERS.index(row["Precoder"]),ESTIMATORS.index(row["Estimator"]))
+            PRECODERS.index(row["Precoder"]),estimator_names.index(row["Estimator"]))
         assert ix not in seen_metrics, ("Duplicate aggregate CSV measurement",ix)
         seen_metrics.add(ix)
         assert int(row["BSAntennas"])==array

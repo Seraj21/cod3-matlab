@@ -55,13 +55,13 @@ def v3_review(summary,args):
 
 هذه محاكاة زمنية لـMU downlink بقناة TDL-C و512-QAM وLDPC، بمعدل حمولة مستهدف 1/8. تُدرس MR وZF وPZF بصورة مستقلة، مع LS وLMMSE وCNN وPerfect CSI. المحطتان 32 و64 هوائيًا، مع ثماني سلاسل RF وأربعة مستخدمين؛ لكل مستخدم أربعة هوائيات استقبال وطبقة واحدة.
 
-بقيت الموارد المرسلة وقدرة المراجع ثابتتين. استُخدمت 22 ملاحظة لكل رقعة محلية من 24 حاملة بدل 18، بإدخال PTRS المرسلة أصلًا مع DMRS في جميع المقدرات العملية. أُعيد حساب إحصاءات LMMSE وتدريب CNN على الملاحظات نفسها. بقيت السرعة 120km/h وانتشار التأخير 1µs والتردد 28GHz وSNR الرفع 15dB، مع تباعد 60kHz وCP ممتد واختبار على 66RB. محور SNR هو الاسمي للتنزيل من 0 إلى 20dB؛ تبقى مكاسب المصفوفة والجمع داخل الأداء، وليس هذا SINR بعد الجمع.
+بقيت الموارد المرسلة وقدرة المراجع ثابتتين. أصبحت 22 ملاحظة متاحة لكل رقعة محلية من 24 حاملة بدل 18، بإدخال PTRS المرسلة أصلًا مع DMRS إلى LMMSE وCNN. اختير استيفاء LS على تحقق حمولة مستقل؛ يوضح الجدول عدد الملاحظات التي يستخدمها فعليًا. أُعيد حساب إحصاءات LMMSE وتدريب CNN على الملاحظات نفسها. بقيت السرعة 120km/h وانتشار التأخير 1µs والتردد 28GHz وSNR الرفع 15dB، مع تباعد 60kHz وCP ممتد واختبار على 66RB. محور SNR هو الاسمي للتنزيل من 0 إلى 20dB؛ تبقى مكاسب المصفوفة والجمع داخل الأداء، وليس هذا SINR بعد الجمع.
 
 احتفظ MR وZF بأوزان V2. يستعمل PZF بحث SLNR واعيًا بضوضاء التصميم وعدم يقين CSI، ثم تثبيت مرجع طور الاستجابة المرغوبة على شبكة 4 بتات، مع سعة ثابتة وقدرة كلية واحدة. هذا تعريف PZF التجريبي هنا، وليس استنساخًا لخوارزمية hybrid phased-ZF المنشورة. التفاصيل والحدود في V2-Phase-Reference.md.
 
 لكل مستقبل CNN من ست كتل بعرض 48 وبوابتي انتباه خفيفتين. استُخدم الجذع السابق مع إعادة تدريب ورأس خرج ابتداؤه صفر. يتعلم تصحيح LMMSE وعدم يقينه؛ ليس ResNeSt-50. أعداد التدريب والتحقق الفعلية محفوظة في ملخص النموذج. استُخدمت 640 قناة تدريب و80 قناة تحقق لكل مستقبل، برقع محلية على 12RB ثم استدلال على 66RB.
 
-تبدأ بذور القنوات الجديدة للتدريب من 17 مليونًا، والتحقق من 18 مليونًا، وتحقق الحمولة المنفصل من 19 مليونًا. اختير معامل استقبال واحد من 0 أو0.5 أو1 لكل precoder على ثمانية أطر تحقق، قبل الاختبار. تبدأ بذور الاختبار من 50 مليونًا، مع {BATCHES} دفعات من {N} أطر لكل حجم محطة. لا تدخل القناة الحقيقية إلى المقدرات العملية أثناء الاختبار.
+تبدأ بذور القنوات الجديدة للتدريب من 17 مليونًا، والتحقق من 18 مليونًا، وتحقق الحمولة المنفصل من 19 مليونًا. اختير معامل استقبال واحد من 0 أو0.5 أو1 لكل precoder على ثمانية أطر تحقق، قبل الاختبار. تبدأ بذور الاختبار من 50 مليونًا، مع {BATCHES} دفعات من {N} أطر لكل حجم محطة. لا تدخل القناة الحقيقية إلى المقدرات العملية أثناء الاختبار. مرجع Perfect CSI يستعمل القناة والتوقيت الحقيقيين، مع بقاء تشوهات RF في الموجة.
 
 منحنى CNN يعني LMMSE عند BS وتصحيح CNN عند UE بالمعامل المختار. بقي تصحيح شبكة المحطة ملغىً بعد رفضه في تحقق الحمولة السابق. إذا اختير معامل استقبال صفر، يتطابق المنحنيان عن قصد، ويُذكر ذلك في الجدول. لا يُدّعى تفوق مضمون على MMSE البايزي ذي الإحصاءات الصحيحة.
 
@@ -82,6 +82,12 @@ def v3_review(summary,args):
     for precoder in PRECODERS:
         a=model['Selection'][precoder]
         text+=f"| {precoder} | {a[0]:g} | {a[1]:g} | {model['BlendRX'][precoder]:.6g} |\n"
+    if 'LSInterpolation' in model:
+        text+='\n## مقارنة LS المصححة\n\n| Precoder | الاستيفاء المختار بتحقق الحمولة | الملاحظات المستخدمة من22متاحة |\n|---|---|---|\n'
+        for precoder in PRECODERS:
+            text+=f"| {precoder} | {model['LSInterpolation'][precoder]} | {model['LSReferencesUsed'][precoder]} |\n"
+        text+='\nكشف التحكم المستقل أن استبدال الاستيفاء التنسوري باستيفاء مثلثي عالمي أضعف LS. اختُبرت ثلاثة خيارات مسبقة: استيفاء DMRS التنسوري، وتصحيحه بابتكار PTRS، والاستيفاء المثلثي الكامل. أعيد حساب تباين LS من إحصاءات التدريب ومعايرته على80قناة تحقق لكلprecoder، ثم اختير خيار واحد لكلprecoder على أطر تحقق الحمولة الثمانية قبل الاختبار. إذا اختير tensor DMRS، تتلقى الطريقة22ملاحظة متاحة وتستخدم18منها فعليًا؛ لا يُخفى هذا الفرق. تبقى موارد الإرسال متطابقة.\n'
+        text+='\nاحتُفظ بتمثيل السمات الذي تدربت عليه CNN، وأثبت اختبار مستقل أن تغيير خط LS وحده لا يغير خرج LMMSE أوCNN. أُعيد تشغيل LS وحده على بذور الاختبار نفسها. تحتوي الحزمة على المكونات الأصلية والمصححة، ويطابق المحلل جميع الأعداد غير التابعة لـLS حرفيًا مع أصلها، ثم يطابق أعداد LS مع تشغيله المصحح. لا يعاد استخدام قياس من قناة أو إطار مختلف.\n'
     text+='\nيعرض V3-paired-CNN-LMMSE.csv الفروق الزوجية وفترات ثقة نقطية بإعادة أخذ العينات على إطار القناة كاملًا. تحجب الفترة إذا اختلفت أقل من خمسة أطر. لا تصحح الفترات تعدد المقارنات عبر SNR. يربط Reference-Equation-Audit.md المعادلات بالتطبيق، ويحفظ V3-summary.json بصمات النماذج ومصدر كل دفعة.\n'
     text+=f'\nالمصدر: https://github.com/Seraj21/cod3-matlab/tree/{args.source}\n\nالتشغيل: https://github.com/Seraj21/cod3-matlab/actions/runs/{args.run_id}\n'
     return text
@@ -123,6 +129,9 @@ def audit_configuration(path,array,batch,rate,model,e,f,version=2,seedbase=None)
     assert np.max(result['PowerError'])<1e-8
     for precoder in PRECODERS:
         np.testing.assert_array_equal(result['ModelSelection'][precoder],model['Selection'][precoder])
+        if 'LSInterpolation' in model:
+            assert result['LSInterpolation'][precoder]==model['LSInterpolation'][precoder]
+            assert result['LSReferencesUsed'][precoder]==model['LSReferencesUsed'][precoder]
 
 def main():
     global A,CAP,N,BATCHES
@@ -186,6 +195,30 @@ def main():
             provenance=by_name[path.name]
             assert provenance['run_id']==(args.recovery_run_id if recovered else args.run_id)
             if not recovered:assert provenance['source']==args.source
+            if 'LSRevision' in metadata:
+                revision=metadata['LSRevision'];assert args.version==3
+                assert revision['ChangedEstimator']=='LS' and revision['LSRun']==args.run_id
+                assert revision['RevisionSource']==args.source
+                assert revision['OriginalEvaluationRun']==model['OriginalFrozenRun']==41943264421
+                assert revision['OriginalSource']=='4f2da4aaf5c685c06b0425affe630eeb69cedec8'
+                assert revision['SelectionSeedBase']==19000000 and revision['ChannelCalibrationSeedBase']==18000000
+                original=root/f'v3-evaluation-{array}-{batch}.zip'
+                revised_ls=root/f'v3-ls-evaluation-{array}-{batch}.zip'
+                oe,of,oh=read_batch(original,array)
+                le,lf,lh=read_batch(revised_ls,array,estimators=['LS'])
+                np.testing.assert_array_equal(e[:,:,:,1:,:],oe[:,:,:,1:,:])
+                np.testing.assert_array_equal(f[:,:,:,1:,:],of[:,:,:,1:,:])
+                np.testing.assert_array_equal(e[:,:,:,:1,:],le)
+                np.testing.assert_array_equal(f[:,:,:,:1,:],lf)
+                assert oh==lh==digest
+                assert by_name[original.name]['run_id']==revision['OriginalEvaluationRun']
+                assert by_name[original.name]['source']==revision['OriginalSource']
+                assert by_name[revised_ls.name]['run_id']==args.run_id
+                assert by_name[revised_ls.name]['source']==args.source
+                for component in [original,revised_ls]:
+                    destination=out/'provenance-components'/component.name
+                    destination.parent.mkdir(exist_ok=True);shutil.copy2(component,destination)
+                summary.setdefault('LS_revision',revision)
             if recovered:
                 assert args.rate==.5 and args.recovery_run_id
                 assert (array,batch) in [(32,2),(32,3),(32,4),(32,5),(32,6),(64,1),(64,2),(64,5),(64,6)]
@@ -242,7 +275,7 @@ def main():
     manifest=[]
     for path in sorted(root.glob('*.zip')):
         if args.version==2 and path.name.startswith('v3-'):continue
-        if path.name.startswith(('v2-evaluation-','v2-robust-','v3-evaluation-')) and not path.name.startswith(args.artifact_prefix+'-'):
+        if path.name.startswith(('v2-evaluation-','v2-robust-','v3-evaluation-','v3-ls-evaluation-','v3-final-evaluation-')) and not path.name.startswith(args.artifact_prefix+'-'):
             continue
         if path.name.startswith('v2-half-part-'):continue
         manifest.append({'file':path.name,'sha256':hashlib.sha256(path.read_bytes()).hexdigest()})

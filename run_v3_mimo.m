@@ -1,7 +1,10 @@
 function run_v3_mimo(antennas,frames,folder,snrDb,seedOffset,modelFile,methodIndices)
 if nargin<4,snrDb=[0:.5:10 11:20];end
 if nargin<5,seedOffset=50000000;end
-if nargin<6,modelFile='v3_frozen/v3_model.mat';end
+if nargin<6
+ modelFile='v3_frozen/v3_model.mat';
+ if isfile('v3_refined/v3_model.mat'),modelFile='v3_refined/v3_model.mat';end
+end
 if nargin<7,methodIndices=1:4;end
 addpath(pwd,'mu_mimo','v2_mimo');load(modelFile,'model');assert(model.Version==6);
 cfg=v3Config(antennas);r=v3Resources(cfg);
