@@ -7,6 +7,6 @@ for scheme=["MR" "ZF" "PZF"]
  assert(isequal(receiver.Signature,model.Signature));
  model.Receivers.(scheme)=receiver;model.Selection.(scheme)=[0 1];
 end
-model.Version=6;model.Signature.PilotMode="DMRS+PTRS";
-model.Signature.PZFMode="robust SLNR, quantized desired-phase anchor";model.Signature.TargetCodeRate=.125;
+model.Version=6;model.Signature.PilotMode='DMRS+PTRS';
+model.Signature.PZFMode='robust SLNR, quantized desired-phase anchor';model.Signature.TargetCodeRate=.125;
 end

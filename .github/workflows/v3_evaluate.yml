@@ -1,0 +1,71 @@
+name: V3 frozen payload selection and independent waveform tests
+on:
+  push:
+    branches: [mu-cnn-v2]
+    paths: [.github/workflows/v3_evaluate.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  freeze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v7
+      - name: Wait for tested, matched receiver training
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run watch 41942634465 --exit-status --interval 60
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: v3-receiver-*
+          run-id: 41942634465
+          github-token: ${{ github.token }}
+          path: rx_models
+      - uses: actions/download-artifact@v8
+        with:
+          name: v2-frozen-model
+          run-id: 41908344154
+          github-token: ${{ github.token }}
+          path: v2_frozen
+      - uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2025b
+          products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
+      - uses: matlab-actions/run-command@v3
+        with:
+          command: v3_freeze;
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: v3-frozen-model
+          path: v3_frozen/
+          if-no-files-found: warn
+  evaluate:
+    needs: freeze
+    strategy:
+      fail-fast: false
+      matrix:
+        antennas: [32, 64]
+        batch: [0, 1, 2, 3, 4, 5, 6, 7]
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: v3-frozen-model
+          path: v3_frozen
+      - uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2025b
+          products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
+      - uses: matlab-actions/run-command@v3
+        with:
+          command: run_v3_mimo(${{ matrix.antennas }},4,'v3_results',[0:.5:10 11:20],50000000+${{ matrix.batch }}*100000);
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: v3-evaluation-${{ matrix.antennas }}-${{ matrix.batch }}
+          path: v3_results/
+          if-no-files-found: warn
