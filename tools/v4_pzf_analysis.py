@@ -191,10 +191,13 @@ def figures(table, methods, choice, output):
                 if tag == "ber":
                     zero = y == 0
                     resolution = 1 / values.PayloadBits.to_numpy()
-                    y = np.where(zero, resolution, y)
                     if zero.any():
-                        ax.scatter(values.SNR_dB[zero], y[zero], marker="v", s=54,
-                                   facecolors="none", edgecolors=color, zorder=6)
+                        marker_size = 5 if method == choice else 7
+                        ax.plot(values.SNR_dB, np.where(zero, resolution, np.nan),
+                                marker="v", markersize=marker_size, markerfacecolor="none",
+                                color=color, linestyle=":", linewidth=1.1,
+                                zorder=7 if method == choice else 6)
+                    y = np.where(zero, np.nan, y)
                 ax.plot(values.SNR_dB, y, label=label, color=color, marker=mark,
                         linestyle=linestyle, linewidth=1.8, markersize=4)
             ax.set_xlim(0, 20)
@@ -214,7 +217,7 @@ def figures(table, methods, choice, output):
                 ax.set_ylim(0, 51)
             ax.grid(True, which="major", color="#cdd1d5", alpha=.8)
             ax.grid(True, which="minor", axis="y", color="#e6e8ea", alpha=.65)
-            ax.legend(loc="upper right" if tag == "ber" else "upper left",
+            ax.legend(loc="upper right" if tag == "ber" else "lower right",
                       ncol=2, frameon=True, framealpha=.96)
             for ext in ["png", "pdf"]:
                 fig.savefig(output / f"pzf_{bs}_{tag}.{ext}", dpi=210)
