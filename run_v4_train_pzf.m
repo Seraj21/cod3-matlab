@@ -56,9 +56,11 @@ target=double(Y(:,6:12,1:128,:));residual=double(predicted(:,6:12,1:128,:));
 blend=max(0,min(1,sum(residual.*target,'all')/max(sum(residual.^2,'all'),eps)));
 priors=calibrateVariance(priors,Y,predicted,blend);
 receiver.PriorsRX=priors;receiver.NetworkRX=net;receiver.BlendRX=blend;receiver.Signature=model.Signature;
+receiver.Signature.TargetCodeRate=cfg.Rate;
 receiver.TrainingChannels=trainFrames;receiver.ValidationChannels=validationFrames;
 receiver.TrainingPatches=24*trainFrames;receiver.ProjectionLoss=useProjection;
-receiver.TrainingBandwidthRB=66;receiver.TrainingCodeRate=.125;
+receiver.TrainingBandwidthRB=66;receiver.TrainingCodeRate=cfg.Rate;
+receiver.TrainingSNR_dB=[0 40];
 receiver.TrainingSeedBase=72000000;receiver.ValidationSeedBase=73000000;
 receiver.ValidationNormalizedMSE=[mean(target.^2,'all') mean((target-blend*residual).^2,'all')];
 save(fullfile(folder,lower(scheme)+"_receiver.mat"),'receiver','-v7.3');
@@ -76,7 +78,7 @@ for frame=1:count
  [grid,~]=muPayload(cfg,r,muSeed(seed,70));
  packet=v2Waveform(scene,r,grid,weights,true);
  n=ceil(frame/2)-1;
- points=[.5*mod(8*n+4*is64,21) 11+mod(7*n+3*is64,10)];
+ points=[.5*mod(8*n+4*is64,21) 11+mod(7*n+3*is64,30)];
  conditions(frame,:)=[training seed bs points];
  for snr=points
   input=v3Receive(packet,scene,r,snr,false,training);

@@ -2,6 +2,7 @@
 
 import argparse
 import json
+from math import ceil
 from pathlib import Path
 
 import matplotlib
@@ -13,7 +14,7 @@ import pandas as pd
 from scipy.io import loadmat
 
 from v4_pzf_analysis import (
-    KEYS, PAYLOAD_BITS, SLOT_SECONDS, TEST_SNR, aggregate, check_design,
+    KEYS, SLOT_SECONDS, aggregate, check_design,
     load_rows, paired_interval, scores, seeds, write_json,
 )
 
@@ -32,19 +33,29 @@ STYLES = [
 ]
 
 
-def profile(rb):
+def profile(rb, rate=.75, max_snr=40):
     if rb == 264:
-        return {
-            "rb": 264, "mhz": 200, "payload_bits": 11880, "coded_bits": 95040,
+        p = {
+            "rb": 264, "mhz": 200, "coded_bits": 95040,
             "frames_per_batch": 2, "validation_seed": 82000000, "test_seed": 94000000,
-            "validation_points": [0, 6, 10, 14, 20], "max_iterations": 200,
+            "validation_points": [0, 6, 10, 14, 20],
         }
-    assert rb == 66
-    return {
-        "rb": 66, "mhz": 50, "payload_bits": PAYLOAD_BITS, "coded_bits": 23760,
-        "frames_per_batch": 4, "validation_seed": 76000000, "test_seed": 92000000,
-        "validation_points": [0, 4, 6, 8, 10, 12, 16, 20], "max_iterations": 100,
-    }
+    else:
+        assert rb == 66
+        p = {
+            "rb": 66, "mhz": 50, "coded_bits": 23760,
+            "frames_per_batch": 4, "validation_seed": 76000000, "test_seed": 92000000,
+            "validation_points": [0, 4, 6, 8, 10, 12, 16, 20],
+        }
+    assert rate in (.125, .75) and max_snr in (20, 40)
+    p["code_rate"] = rate
+    p["payload_bits"] = 8 * int(rate * p["coded_bits"] / 8)
+    # NR BG2 is selected at rate 1/8, and BG1 at rate 3/4 for these payloads.
+    max_block = 3840 if rate == .125 else 8448
+    p["max_iterations"] = 50 * max(1, ceil((p["payload_bits"] + 24) / (max_block - 24)))
+    p["test_points"] = list(np.arange(0, 10.5, .5)) + list(range(11, max_snr + 1))
+    p["validation_points"] += list(range(25, max_snr + 1, 5))
+    return p
 
 
 def ceiling(p):
@@ -70,7 +81,7 @@ def audit_settings(root, base, batches, points, p):
         key = (scheme, int(cfg["Antennas"]), int(s["SeedOffset"]))
         assert key in expected and key not in observed, path
         assert s["FrameCount"] == p["frames_per_batch"] and s["PayloadBits"] == p["payload_bits"], path
-        assert s["CodedBits"] == p["coded_bits"] and s["CodeRate"] == .125, path
+        assert s["CodedBits"] == p["coded_bits"] and s["CodeRate"] == p["code_rate"], path
         assert s["FrameDuration"] == SLOT_SECONDS, path
         assert np.array_equal(s["SNR_dB"], points), path
         assert [cfg[k] for k in ("NumRB", "Users", "UERx", "RFChains", "M", "Qm")] == [
@@ -91,7 +102,8 @@ def freeze(root, output, p):
                      points, CONTROLS + CANDIDATES, RETRIES)
     retry_scores = scores(rows, "Retry", RETRIES)
     selected_retry = str(retry_scores.index[0])
-    choice = {"Version": 1, "NumRB": p["rb"], "Retry": selected_retry, "CNN": {},
+    choice = {"Version": 1, "NumRB": p["rb"], "CodeRate": p["code_rate"],
+              "MaxSNR_dB": max(p["test_points"]), "Retry": selected_retry, "CNN": {},
               "SeedBase": seed, "FramesPerArray": 4 * frames, "SNR_dB": points,
               "RetryScores": retry_scores.drop(columns="order").reset_index().to_dict("records"),
               "CNNScores": {}}
@@ -111,7 +123,8 @@ def plot_precoder(precoder, table, methods, out, p):
         ("Goodput_Mbps", "Throughput", "Delivered payload throughput", "Throughput (Mbit/s)"),
     ]:
         fig, axes = plt.subplots(1, 2, sharey=True, figsize=(13.2, 5.55), layout="constrained")
-        fig.suptitle(f"{precoder}  |  {title}\n{p['mhz']} MHz  ·  TDL-C  ·  512-QAM  ·  LDPC 1/8  ·  Four users",
+        code_label = "3/4" if p["code_rate"] == .75 else "1/8"
+        fig.suptitle(f"{precoder}  |  {title}\n{p['mhz']} MHz  ·  TDL-C  ·  512-QAM  ·  LDPC {code_label}  ·  Four users",
                      fontsize=16, fontweight="semibold")
         x_label = "SNR (dB)"
         if slug == "BER":
@@ -133,8 +146,8 @@ def plot_precoder(precoder, table, methods, out, p):
                 ax.plot(x, y, color=color, marker=marker, linestyle=linestyle,
                         linewidth=1.75, markersize=3.6, label=label)
             ax.set_title(f"{bs} BS antennas", fontsize=13)
-            ax.set_xlim(0, 20)
-            ax.set_xticks(range(0, 21, 2))
+            ax.set_xlim(0, max(p["test_points"]))
+            ax.set_xticks(range(0, max(p["test_points"]) + 1, 4 if max(p["test_points"]) == 40 else 2))
             ax.set_ylabel(ylabel)
             ax.tick_params(axis="y", labelleft=True)
             if slug == "BER":
@@ -160,13 +173,16 @@ def review(root, selection, output, p):
     retry = choice["Retry"]
     assert choice["Version"] == 1 and retry in RETRIES and set(choice["CNN"]) == set(PRECODERS)
     assert choice.get("NumRB", 66) == p["rb"]
+    assert choice.get("CodeRate", .125) == p["code_rate"]
+    assert choice.get("MaxSNR_dB", 20) == max(p["test_points"])
     rows = load_paired(root, p)
     seed, frames = p["test_seed"], p["frames_per_batch"]
-    audit_settings(root, seed, 8, TEST_SNR, p)
+    points = p["test_points"]
+    audit_settings(root, seed, 8, points, p)
     rows.to_csv(Path(output) / "paired_user_blocks.csv", index=False)
     results = []
     summary = {"Selection": choice, "TestSeedBase": seed, "FramesPerArray": 8 * frames,
-               "NumRB": p["rb"], "BandwidthMHz": p["mhz"], "SNR_dB": TEST_SNR,
+               "NumRB": p["rb"], "BandwidthMHz": p["mhz"], "CodeRate": p["code_rate"], "SNR_dB": points,
                "ThroughputCeiling_Mbps": ceiling(p), "Precoders": {}}
     figures = Path(output) / "figures"
     figures.mkdir(parents=True, exist_ok=True)
@@ -175,7 +191,7 @@ def review(root, selection, output, p):
         assert candidate in CANDIDATES
         methods = [*CONTROLS, candidate, "Perfect CSIR"]
         paired = rows[rows.Precoder == precoder]
-        check_design(paired, seeds(seed, 8, frames), TEST_SNR, methods, ["None", retry])
+        check_design(paired, seeds(seed, 8, frames), points, methods, ["None", retry])
         t = aggregate(paired, p["payload_bits"])
         assert t.PayloadBits.eq(32 * frames * p["payload_bits"]).all() and t.Frames.eq(8 * frames).all()
         assert t.Goodput_Mbps.between(0, ceiling(p) + 1e-9).all()
@@ -196,13 +212,14 @@ def review(root, selection, output, p):
             "CNNTiesAgainstMatchedLMMSE": int((ber[candidate] == ber["Aligned LMMSE"]).sum()),
             "PairedMeanBERGainCI95": paired_interval(paired_final, candidate, "Aligned LMMSE"),
             "At20dB": final[final.SNR_dB == 20].to_dict("records"),
+            "AtMaxSNR": final[final.SNR_dB == max(points)].to_dict("records"),
         }
-        print(precoder, "CNN:", candidate, "mean over 62 paired SNR/size points")
+        print(precoder, "CNN:", candidate, f"mean over {2 * len(points)} paired SNR/size points")
         if not false_accepts.empty:
             print("CRC false accepts excluded from delivered payload throughput:")
             print(false_accepts.to_string(index=False))
         print(average.to_string())
-        print(final[final.SNR_dB == 20][
+        print(final[final.SNR_dB == max(points)][
             ["BS", "Estimator", "PayloadBitErrors", "CorrectTransportBlocks", "PostLDPC_BER", "Goodput_Mbps"]
         ].to_string(index=False))
     pd.concat(results, ignore_index=True).to_csv(Path(output) / "metrics.csv", index=False)
@@ -221,12 +238,15 @@ def main():
     report.add_argument("selection")
     report.add_argument("output")
     report.add_argument("--rb", type=int, choices=[66, 264], default=66)
+    for command in (select, report):
+        command.add_argument("--rate", type=float, choices=[.125, .75], default=.75)
+        command.add_argument("--max-snr", type=int, choices=[20, 40], default=40)
     args = parser.parse_args()
     if args.stage == "freeze":
-        freeze(args.root, args.output, profile(args.rb))
+        freeze(args.root, args.output, profile(args.rb, args.rate, args.max_snr))
     else:
         Path(args.output).mkdir(parents=True, exist_ok=True)
-        review(args.root, args.selection, args.output, profile(args.rb))
+        review(args.root, args.selection, args.output, profile(args.rb, args.rate, args.max_snr))
 
 
 if __name__ == "__main__":

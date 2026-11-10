@@ -1,16 +1,16 @@
 function run_v3_integrated(precoder,antennas,batch,stage,numRB)
 % V3 precoders and the V4 receiver share the same validation and test design.
 precoder=string(precoder);stage=string(stage);
-if nargin<5,numRB=66;end
+if nargin<5,numRB=264;end
 assert(ismember(precoder,["MR" "ZF" "PZF"]));
 assert(ismember(antennas,[32 64]));
 assert(ismember(batch,0:7));
 assert(ismember(numRB,[66 264]));
 frames=4;validationSeed=76000000;testSeed=92000000;
-validationSNR=[0 4 6 8 10 12 16 20];
+validationSNR=[0 4 6 8 10 12 16 20 25 30 35 40];
 if numRB==264
  frames=2;validationSeed=82000000;testSeed=94000000;
- validationSNR=[0 6 10 14 20];
+ validationSNR=[0 6 10 14 20 25 30 35 40];
 end
 methods=["LS on common packet" "LMMSE" "Aligned LMMSE"];
 if stage=="validation"
@@ -22,12 +22,15 @@ else
  assert(stage=="test");
  choice=jsondecode(fileread('integrated_selection/selection.json'));
  assert(choice.Version==1 && ismember(string(choice.Retry),["APP50" "CSI-APP50"]));
+ cfg=v3Config(antennas,numRB);
+ assert(choice.CodeRate==cfg.Rate && choice.MaxSNR_dB==40, ...
+  'Repeat validation before testing the new code rate and SNR range');
  if isfield(choice,'NumRB'),assert(choice.NumRB==numRB);else,assert(numRB==66);end
  candidate=string(choice.CNN.(precoder));
  assert(ismember(candidate,["V3 CNN" "Aligned CNN"]));
  modes=["None" string(choice.Retry)];
  methods=[methods candidate "Perfect CSIR"];
- snr=[0:.5:10 11:20];seed=testSeed;
+ snr=[0:.5:10 11:40];seed=testSeed;
 end
 options=struct('Precoder',precoder,'RetryModes',modes,'Methods',methods,'NumRB',numRB, ...
  'AlignedModel',fullfile('integrated_receiver',lower(precoder)+"_receiver.mat"));

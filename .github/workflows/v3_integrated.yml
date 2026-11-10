@@ -1,4 +1,4 @@
-name: Integrated V3 200 MHz BER and throughput for ZF PZF MR
+name: Integrated V3 200 MHz rate 3-4 and SNR 0-40 for ZF PZF MR
 on:
   push:
     branches: [mu-cnn-v2]
@@ -9,7 +9,7 @@ permissions:
 jobs:
   smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
@@ -24,9 +24,37 @@ jobs:
           products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
       - uses: matlab-actions/run-command@v3
         with:
-          command: addpath('mu_mimo','v2_mimo');v4ReceiverSelfTest;r=v3Resources(v3Config(32,264));assert(r.CodedBits==95040 && r.PayloadBits==11880 && r.FrameDuration==.00025);p=int8(mod((1:r.PayloadBits).',2));c=r.Codec.encode(p);[q,bad]=r.Codec.decode(16*(1-2*double(c)),50,'Layered belief propagation');assert(~bad && isequal(p,q));for s=["ZF" "PZF" "MR"],o=struct('Precoder',s,'RetryModes',["APP50" "CSI-APP50"],'Methods',["LS on common packet" "Perfect CSIR"],'AlignedModel',"",'NumRB',264);run_v3_mimo(32,1,fullfile('smoke',s),[0 20],83000000,'v3_refined/v3_model.mat',[],o);end
-  validation:
+          command: addpath('mu_mimo','v2_mimo');v4ReceiverSelfTest;r=v3Resources(v3Config(32,264));assert(r.CodedBits==95040 && r.PayloadBits==71280 && r.FrameDuration==.00025);rng(83000000);p=int8(randi([0 1],r.PayloadBits,1));c=r.Codec.encode(p);[q,bad]=r.Codec.decode(16*(1-2*double(c)),50,'Layered belief propagation');assert(~bad && isequal(p,q));for s=["ZF" "PZF" "MR"],o=struct('Precoder',s,'RetryModes',["APP50" "CSI-APP50"],'Methods',["LS on common packet" "Perfect CSIR"],'AlignedModel',"",'NumRB',264);run_v3_mimo(32,1,fullfile('smoke',s),[0 20 40],83000000,'v3_refined/v3_model.mat',[],o);end
+  train:
     needs: smoke
+    strategy:
+      fail-fast: false
+      matrix:
+        precoder: [ZF, PZF, MR]
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: v3-refined-frozen-model
+          run-id: 41946464299
+          github-token: ${{ github.token }}
+          path: v3_refined
+      - uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2025b
+          products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
+      - uses: matlab-actions/run-command@v3
+        with:
+          command: run_v4_train_pzf('integrated_receiver',true,'v3_refined/v3_model.mat',128,32,10,"${{ matrix.precoder }}");
+      - uses: actions/upload-artifact@v7
+        with:
+          name: v3-integrated-receiver-${{ matrix.precoder }}
+          path: integrated_receiver/
+          if-no-files-found: error
+  validation:
+    needs: train
     strategy:
       fail-fast: false
       matrix:
@@ -34,7 +62,7 @@ jobs:
         antennas: [32, 64]
         batch: [0, 1, 2, 3]
     runs-on: ubuntu-latest
-    timeout-minutes: 80
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
@@ -44,18 +72,8 @@ jobs:
           github-token: ${{ github.token }}
           path: v3_refined
       - uses: actions/download-artifact@v8
-        if: matrix.precoder != 'PZF'
         with:
           name: v3-integrated-receiver-${{ matrix.precoder }}
-          run-id: 42018082199
-          github-token: ${{ github.token }}
-          path: integrated_receiver
-      - uses: actions/download-artifact@v8
-        if: matrix.precoder == 'PZF'
-        with:
-          name: v4-pzf-aligned
-          run-id: 41999639429
-          github-token: ${{ github.token }}
           path: integrated_receiver
       - uses: matlab-actions/setup-matlab@v3
         with:
@@ -98,7 +116,7 @@ jobs:
         antennas: [32, 64]
         batch: [0, 1, 2, 3, 4, 5, 6, 7]
     runs-on: ubuntu-latest
-    timeout-minutes: 150
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
@@ -112,18 +130,8 @@ jobs:
           github-token: ${{ github.token }}
           path: v3_refined
       - uses: actions/download-artifact@v8
-        if: matrix.precoder != 'PZF'
         with:
           name: v3-integrated-receiver-${{ matrix.precoder }}
-          run-id: 42018082199
-          github-token: ${{ github.token }}
-          path: integrated_receiver
-      - uses: actions/download-artifact@v8
-        if: matrix.precoder == 'PZF'
-        with:
-          name: v4-pzf-aligned
-          run-id: 41999639429
-          github-token: ${{ github.token }}
           path: integrated_receiver
       - uses: matlab-actions/setup-matlab@v3
         with:

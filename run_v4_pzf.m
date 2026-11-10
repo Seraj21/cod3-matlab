@@ -1,7 +1,7 @@
 function run_v4_pzf(antennas,frames,folder,snrDb,seedOffset,modelFile,modes,methods,matchedFile,alignedFile,scheme,numRB)
 % Paired measurement with a common waveform for receiver-only estimators.
 addpath(pwd,'mu_mimo','v2_mimo');
-if nargin<4,snrDb=[0:.5:10 11:20];end
+if nargin<4,snrDb=[0:.5:10 11:40];end
 if nargin<5,seedOffset=90000000;end
 if nargin<6,modelFile='v3_refined/v3_model.mat';end
 if nargin<7,modes="None";end
@@ -16,18 +16,18 @@ modes=string(modes);methods=string(methods);
 assert(all(ismember(modes,["None" "NMS50" "LBP50" "APP20" "APP50" "CSI-APP20" "CSI-APP50"])));
 assert(all(ismember(methods,["LS" "LS on common packet" "LMMSE" "Matched LMMSE" ...
  "V3 CNN" "Matched CNN" "Aligned LMMSE" "Aligned CNN" "Perfect CSIR" "Perfect CSI"])));
-assert(all(diff(snrDb)>0) && min(snrDb)>=0 && max(snrDb)<=20);
+assert(all(diff(snrDb)>0) && min(snrDb)>=0 && max(snrDb)<=40);
 loaded=load(modelFile,'model');model=loaded.model;
+cfg=v3Config(antennas,numRB);r=v3Resources(cfg);
 selection=model.Selection.(scheme);
 assert(model.Version==6 && selection(1)==0);
 rx=model.Receivers.(scheme);rx.BlendRX=rx.BlendRX*selection(2);
 if any(ismember(methods,["Matched LMMSE" "Matched CNN"]))
- matched=loadReceiver(matchedFile,model,false,scheme);
+ matched=loadReceiver(matchedFile,model,false,scheme,cfg.Rate);
 end
 if any(ismember(methods,["Aligned CNN" "Aligned LMMSE"]))
- aligned=loadReceiver(alignedFile,model,true,scheme);
+ aligned=loadReceiver(alignedFile,model,true,scheme,cfg.Rate);
 end
-cfg=v3Config(antennas,numRB);r=v3Resources(cfg);
 needTruth=any(methods=="Perfect CSIR");
 rows=cell(frames*numel(snrDb)*numel(methods)*numel(modes)*cfg.Users,14);at=0;
 for frame=1:frames
@@ -107,14 +107,15 @@ settings=struct('FrameDuration',r.FrameDuration,'CodeRate',cfg.Rate,'CodedBits',
  'PayloadBits',r.PayloadBits,'SeedOffset',seedOffset,'SNR_dB',snrDb,'FrameCount',frames,'Config',cfg,'Precoder',char(scheme));
 save(fullfile(folder,'pzf_settings.mat'),'settings');
 end
-function receiver=loadReceiver(file,model,projection,scheme)
+function receiver=loadReceiver(file,model,projection,scheme,rate)
 loaded=load(file,'receiver');receiver=loaded.receiver;
 % Older PZF receivers inherit the geometry signature before V3 assembly.
-compatible=isequal(receiver.Signature,model.Signature) || ...
- isequal(receiver.Signature,model.Receivers.(scheme).Signature);
+expected=model.Signature;expected.TargetCodeRate=rate;
+legacy=model.Receivers.(scheme).Signature;legacy.TargetCodeRate=rate;
+compatible=isequal(receiver.Signature,expected) || isequal(receiver.Signature,legacy);
 assert(compatible,'Receiver geometry signature does not match the frozen model');
 assert(receiver.Version==model.Version && receiver.Scheme==scheme && ...
  receiver.ProjectionLoss==projection && receiver.TrainingBandwidthRB==66 && ...
  receiver.PilotMode==string(model.Signature.PilotMode) && ...
- receiver.TrainingCodeRate==model.Signature.TargetCodeRate,'Receiver training conditions do not match deployment');
+ receiver.TrainingCodeRate==rate,'Receiver training conditions do not match deployment');
 end

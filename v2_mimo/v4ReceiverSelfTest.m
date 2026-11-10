@@ -11,13 +11,16 @@ end
 edge=v4SymbolLLR(symbols,repmat(.001,M,1),repmat(1e8,M,1),M);
 assert(all(isfinite(edge)));
 % Verify layered BP can decode the identical Qm=9 rate-matched stream.
-cfg=v3Config(32);r=v3Resources(cfg);
-stream=RandStream('mt19937ar','Seed',71000301);
-payload=int8(randi(stream,[0 1],r.PayloadBits,1));
-llr=14*(1-2*double(r.Codec.encode(payload)));
-for mode=["Normalized min-sum" "Layered belief propagation"]
- [bits,failed,iterations]=r.Codec.decode(llr,50,char(mode));
- assert(~failed && isequal(payload,bits) && all(iterations>0,'all'));
+for numRB=[66 264]
+ cfg=v3Config(32,numRB);r=v3Resources(cfg);
+ assert(r.PayloadBits==8*floor(.75*r.CodedBits/8) && cfg.Rate==.75);
+ stream=RandStream('mt19937ar','Seed',71000301);
+ payload=int8(randi(stream,[0 1],r.PayloadBits,1));
+ llr=14*(1-2*double(r.Codec.encode(payload)));
+ for mode=["Normalized min-sum" "Layered belief propagation"]
+  [bits,failed,iterations]=r.Codec.decode(llr,50,char(mode));
+  assert(~failed && isequal(payload,bits) && all(iterations>0,'all'));
+ end
+ assert(Qm==r.Codec.Qm);
 end
-assert(Qm==r.Codec.Qm);
 end
