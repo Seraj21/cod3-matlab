@@ -1,4 +1,4 @@
-name: Integrated V3 200 MHz receiver diagnosis and evaluation
+name: Integrated V3 200 MHz phase-consistent receiver evaluation
 on:
   push:
     branches: [mu-cnn-v2]
