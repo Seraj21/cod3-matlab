@@ -6,8 +6,12 @@ on:
 permissions:
   contents: read
   actions: read
+env:
+  # Recover the completed training and validation from the evaluation failure.
+  PREREQUISITE_RUN_ID: ${{ github.event.before == '807abcf7021d5d71a2e1ca01584d1458f0d5bfdd' && '42926578915' || github.run_id }}
 jobs:
   smoke:
+    if: github.event.before != '807abcf7021d5d71a2e1ca01584d1458f0d5bfdd'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -89,6 +93,7 @@ jobs:
           if-no-files-found: error
   freeze:
     needs: validation
+    if: ${{ !cancelled() && (needs.validation.result == 'success' || (needs.validation.result == 'skipped' && github.event.before == '807abcf7021d5d71a2e1ca01584d1458f0d5bfdd')) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -96,6 +101,8 @@ jobs:
         with:
           pattern: integrated-validation-*
           path: validation
+          run-id: ${{ env.PREREQUISITE_RUN_ID }}
+          github-token: ${{ github.token }}
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
@@ -109,6 +116,7 @@ jobs:
           if-no-files-found: error
   evaluate:
     needs: freeze
+    if: ${{ !cancelled() && needs.freeze.result == 'success' }}
     strategy:
       fail-fast: false
       matrix:
@@ -133,6 +141,8 @@ jobs:
         with:
           name: v3-integrated-receiver-${{ matrix.precoder }}
           path: integrated_receiver
+          run-id: ${{ env.PREREQUISITE_RUN_ID }}
+          github-token: ${{ github.token }}
       - uses: matlab-actions/setup-matlab@v3
         with:
           release: R2025b
@@ -147,6 +157,7 @@ jobs:
           if-no-files-found: error
   review:
     needs: evaluate
+    if: ${{ !cancelled() && needs.evaluate.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

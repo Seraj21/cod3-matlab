@@ -1,5 +1,6 @@
 function run_v3_integrated(precoder,antennas,batch,stage,numRB)
 % V3 precoders and the V4 receiver share the same validation and test design.
+addpath('mu_mimo','v2_mimo');
 precoder=string(precoder);stage=string(stage);
 if nargin<5,numRB=264;end
 assert(ismember(precoder,["MR" "ZF" "PZF"]));
