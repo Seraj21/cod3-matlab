@@ -33,6 +33,20 @@ for numRB=[66 264]
   [bits,failed]=r.Codec.decode(restored,50,'Layered belief propagation');
   assert(~failed && isequal(payload,bits),'512-QAM/LDPC AWGN round-trip failed');
  end
+ if numRB==66
+  % A residual common phase must not be mistaken for additional ICI noise.
+  [grid,payload]=muPayload(cfg,r,71000302);
+  h=complex(zeros(r.K,r.L,16,4));
+  for user=1:4
+   for layer=1:4,h(:,:,(user-1)*4+layer,layer)=1;end
+  end
+  observed=sum(h.*reshape(grid,r.K,r.L,1,4),4)*exp(.37i);
+  input=struct('Observed',observed,'Noise',1e-4*ones(1,16));
+  [errors,failed,detail]=v2Decode(input,h,zeros(size(h)),payload,cfg,r);
+  assert(all(errors==0 & ~failed),'Residual-phase receiver round-trip failed');
+  assert(all(detail.MeanEffectiveVariance<1.01e-4), ...
+   'Removed common phase must not inflate the LLR noise variance');
+ end
 end
 fprintf('V4_RECEIVER_SELF_TEST_PASS: rate 3/4, 66/264 RB, QAM and AWGN round trips\n');
 end
