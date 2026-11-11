@@ -56,6 +56,8 @@ for u=find(users)
  if numel(valid)>1
   phase=interp1(valid,unwrap(angle(phasor(valid))),min(valid(end),max(valid(1),(1:r.L).')),'linear');
   equalized=equalized.*exp(-1i*phase.');
+  % The prediction must use the same phase reference as the rotated samples.
+  coupling=coupling.*exp(-1i*phase.');
  end
  % Remove all known pilot contributions before estimating unmodelled ICI/ISI.
  expected=sum(coupling.*r.DMRS,3);

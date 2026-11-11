@@ -22,5 +22,17 @@ for numRB=[66 264]
   assert(~failed && isequal(payload,bits) && all(iterations>0,'all'));
  end
  assert(Qm==r.Codec.Qm);
+ % Exercise the actual interleaver, QAM mapper and soft demapper, not just LDPC.
+ coded=r.Codec.encode(payload);
+ symbols=qammod(coded(r.BitOrder),cfg.M,'InputType','bit','UnitAveragePower',true);
+ for snr=[30 40]
+  noise=10^(-snr/10);
+  received=symbols+sqrt(noise/2)*(randn(stream,size(symbols))+1i*randn(stream,size(symbols)));
+  demapped=qamdemod(received,cfg.M,'OutputType','approxllr','UnitAveragePower',true,'NoiseVariance',noise);
+  restored=zeros(r.CodedBits,1);restored(r.BitOrder)=max(-50,min(50,demapped));
+  [bits,failed]=r.Codec.decode(restored,50,'Layered belief propagation');
+  assert(~failed && isequal(payload,bits),'512-QAM/LDPC AWGN round-trip failed');
+ end
 end
+fprintf('V4_RECEIVER_SELF_TEST_PASS: rate 3/4, 66/264 RB, QAM and AWGN round trips\n');
 end
