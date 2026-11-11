@@ -148,6 +148,12 @@ def aggregate(rows, payload_bits=PAYLOAD_BITS):
         ExtraIterations=("ExtraIterations", "sum"), Frames=("ChannelSeed", "nunique"),
         Retries=("ExtraIterations", lambda value: int(value.gt(0).sum())),
     ).reset_index()
+    diagnostics = [name for name in ("PrimaryPreLDPC_BER", "PrimaryEVM_percent", "PrimaryEstimatedSINR_dB")
+                   if name in rows.columns]
+    if diagnostics:
+        values = groups[diagnostics].mean().reset_index()
+        table = table.merge(values, on=["BS", "Estimator", "Retry", "SNR_dB"], validate="one_to_one")
+    table["BLER"] = 1 - table.CorrectTransportBlocks / (4 * table.Frames)
     table["PostLDPC_BER"] = table.PayloadBitErrors / table.PayloadBits
     table["Goodput_Mbps"] = table.CorrectTransportBlocks * payload_bits / (
         table.Frames * SLOT_SECONDS * 1e6

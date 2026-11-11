@@ -14,18 +14,20 @@ if numRB==264
  validationSNR=[0 6 10 14 20 25 30 35 40];
 end
 methods=["LS on common packet" "LMMSE" "Aligned LMMSE"];
+cfg=v3Config(antennas,numRB);
 if stage=="validation"
  assert(batch<4);
  modes=["APP50" "CSI-APP50"];
- methods=[methods "V3 CNN" "Aligned CNN"];
+ methods=[methods "V3 CNN" "Aligned CNN" "Perfect CSIR"];
  snr=validationSNR;seed=validationSeed;
 else
  assert(stage=="test");
  choice=jsondecode(fileread('integrated_selection/selection.json'));
  assert(choice.Version==1 && ismember(string(choice.Retry),["APP50" "CSI-APP50"]));
- cfg=v3Config(antennas,numRB);
  assert(choice.CodeRate==cfg.Rate && choice.MaxSNR_dB==40, ...
   'Repeat validation before testing the new code rate and SNR range');
+ assert(isfield(choice,'OperatingProfile') && string(choice.OperatingProfile)==string(cfg.OperatingProfile), ...
+  'Repeat validation before changing the channel operating profile');
  if isfield(choice,'NumRB'),assert(choice.NumRB==numRB);else,assert(numRB==66);end
  candidate=string(choice.CNN.(precoder));
  assert(ismember(candidate,["V3 CNN" "Aligned CNN"]));

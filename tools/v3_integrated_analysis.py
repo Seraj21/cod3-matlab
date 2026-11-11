@@ -33,7 +33,7 @@ STYLES = [
 ]
 
 
-def profile(rb, rate=.75, max_snr=40):
+def profile(rb, rate=.75, max_snr=40, channel_profile="stressed"):
     if rb == 264:
         p = {
             "rb": 264, "mhz": 200, "coded_bits": 95040,
@@ -48,6 +48,11 @@ def profile(rb, rate=.75, max_snr=40):
             "validation_points": [0, 4, 6, 8, 10, 12, 16, 20],
         }
     assert rate in (.125, .75) and max_snr in (20, 40)
+    assert channel_profile in ("stressed", "mobile")
+    p["channel_profile"] = channel_profile
+    p["channel"] = ({"DelaySpread": 300e-9, "Speed": 30, "SoundingSNR": 30}
+                    if channel_profile == "mobile" else
+                    {"DelaySpread": 1e-6, "Speed": 120, "SoundingSNR": 15})
     p["code_rate"] = rate
     p["payload_bits"] = 8 * int(rate * p["coded_bits"] / 8)
     # NR BG2 is selected at rate 1/8, and BG1 at rate 3/4 for these payloads.
@@ -87,7 +92,10 @@ def audit_settings(root, base, batches, points, p):
         assert [cfg[k] for k in ("NumRB", "Users", "UERx", "RFChains", "M", "Qm")] == [
             p["rb"], 4, 4, 8, 512, 9
         ], path
-        assert cfg["DelaySpread"] == 1e-6 and cfg["Speed"] == 120, path
+        for name, value in p["channel"].items():
+            assert np.isclose(cfg[name], value, rtol=1e-12, atol=0), (path, name)
+        if p["channel_profile"] == "mobile":
+            assert cfg["OperatingProfile"] == "mobile", path
         observed.add(key)
     assert observed == expected, f"Missing settings for {expected - observed}"
 
@@ -99,7 +107,8 @@ def freeze(root, output, p):
     audit_settings(root, seed, 4, points, p)
     for precoder in PRECODERS:
         check_design(rows[rows.Precoder == precoder], seeds(seed, 4, frames),
-                     points, CONTROLS + CANDIDATES, RETRIES)
+                     points, CONTROLS + CANDIDATES +
+                     (["Perfect CSIR"] if p["channel_profile"] == "mobile" else []), RETRIES)
     retry_scores = scores(rows, "Retry", RETRIES)
     selected_retry = str(retry_scores.index[0])
     choice = {"Version": 1, "NumRB": p["rb"], "CodeRate": p["code_rate"],
@@ -107,24 +116,44 @@ def freeze(root, output, p):
               "SeedBase": seed, "FramesPerArray": 4 * frames, "SNR_dB": points,
               "RetryScores": retry_scores.drop(columns="order").reset_index().to_dict("records"),
               "CNNScores": {}}
+    if p["channel_profile"] == "mobile":
+        choice["OperatingProfile"] = p["channel_profile"]
+        choice["ChannelConfig"] = p["channel"]
     filtered = rows[(rows.Retry == selected_retry) & rows.Estimator.isin(CANDIDATES)]
     for precoder in PRECODERS:
         cnn_scores = scores(filtered[filtered.Precoder == precoder], "Estimator", CANDIDATES)
         choice["CNN"][precoder] = str(cnn_scores.index[0])
         choice["CNNScores"][precoder] = cnn_scores.drop(columns="order").reset_index().to_dict("records")
+    if p["channel_profile"] == "mobile":
+        # A runnable receiver is not necessarily a usable communication link.
+        viability = []
+        for precoder, candidate in choice["CNN"].items():
+            for bs in (32, 64):
+                high = filtered[(filtered.Precoder == precoder) & (filtered.BS == bs) &
+                                (filtered.Estimator == candidate) & (filtered.SNR_dB == max(points))]
+                correct = int(high.Correct.sum())
+                viability.append({"Precoder": precoder, "BS": bs, "Correct": correct,
+                                  "Blocks": len(high), "BLER": 1 - correct / len(high)})
+        choice["HighSNRValidation"] = viability
+        print(pd.DataFrame(viability).to_string(index=False))
+        assert all(x["Correct"] > 0 for x in viability), (
+            "Physical link viability check failed: at least one selected receiver delivers no "
+            "correct blocks at maximum SNR. Inspect validation EVM/pre-LDPC BER before final evaluation."
+        )
     write_json(output, choice)
     print(json.dumps(choice, indent=2))
 
 
 def plot_precoder(precoder, table, methods, out, p):
-    plt.rcParams.update({"font.size": 12, "axes.labelsize": 13, "legend.fontsize": 10.5})
+    plt.rcParams.update({"font.size": 13, "axes.labelsize": 14, "legend.fontsize": 11.5})
     for field, slug, title, ylabel in [
         ("PostLDPC_BER", "BER", "BER after LDPC", "Payload bit error rate"),
-        ("Goodput_Mbps", "Throughput", "Delivered payload throughput", "Throughput (Mbit/s)"),
+        ("Goodput_Mbps", "Throughput", "Delivered payload goodput", "Goodput (Mbit/s)"),
     ]:
         fig, axes = plt.subplots(1, 2, sharey=True, figsize=(13.2, 5.55), layout="constrained")
         code_label = "3/4" if p["code_rate"] == .75 else "1/8"
-        fig.suptitle(f"{precoder}  |  {title}\n{p['mhz']} MHz  ·  TDL-C  ·  512-QAM  ·  LDPC {code_label}  ·  Four users",
+        fig.suptitle(f"{precoder}  |  {title}\n{p['mhz']} MHz  ·  TDL-C  ·  512-QAM  ·  LDPC {code_label}  ·  Four users"
+                     f"\n{p['channel']['Speed']} km/h · RMS delay {p['channel']['DelaySpread']*1e9:g} ns · SRS SNR {p['channel']['SoundingSNR']} dB",
                      fontsize=16, fontweight="semibold")
         x_label = "SNR (dB)"
         if slug == "BER":
@@ -143,7 +172,7 @@ def plot_precoder(precoder, table, methods, out, p):
                                 markerfacecolor="none", color=color, linestyle=":",
                                 linewidth=1, zorder=7 if label == "CNN" else 6)
                     y = np.where(zero, np.nan, y)
-                ax.plot(x, y, color=color, marker=marker, linestyle=linestyle,
+                ax.plot(x, y, color=color, marker=None, linestyle=linestyle,
                         linewidth=1.75, markersize=3.6, label=label)
             ax.set_title(f"{bs} BS antennas", fontsize=13)
             ax.set_xlim(0, max(p["test_points"]))
@@ -175,6 +204,9 @@ def review(root, selection, output, p):
     assert choice.get("NumRB", 66) == p["rb"]
     assert choice.get("CodeRate", .125) == p["code_rate"]
     assert choice.get("MaxSNR_dB", 20) == max(p["test_points"])
+    if p["channel_profile"] == "mobile":
+        assert choice.get("OperatingProfile") == p["channel_profile"]
+        assert choice.get("ChannelConfig") == p["channel"]
     rows = load_paired(root, p)
     seed, frames = p["test_seed"], p["frames_per_batch"]
     points = p["test_points"]
@@ -183,7 +215,8 @@ def review(root, selection, output, p):
     results = []
     summary = {"Selection": choice, "TestSeedBase": seed, "FramesPerArray": 8 * frames,
                "NumRB": p["rb"], "BandwidthMHz": p["mhz"], "CodeRate": p["code_rate"], "SNR_dB": points,
-               "ThroughputCeiling_Mbps": ceiling(p), "Precoders": {}}
+               "ThroughputCeiling_Mbps": ceiling(p), "ChannelProfile": p["channel_profile"],
+               "ChannelConfig": p["channel"], "Precoders": {}}
     figures = Path(output) / "figures"
     figures.mkdir(parents=True, exist_ok=True)
     for precoder in PRECODERS:
@@ -239,14 +272,15 @@ def main():
     report.add_argument("output")
     report.add_argument("--rb", type=int, choices=[66, 264], default=66)
     for command in (select, report):
+        command.add_argument("--channel-profile", choices=["stressed", "mobile"], default="stressed")
         command.add_argument("--rate", type=float, choices=[.125, .75], default=.75)
         command.add_argument("--max-snr", type=int, choices=[20, 40], default=40)
     args = parser.parse_args()
     if args.stage == "freeze":
-        freeze(args.root, args.output, profile(args.rb, args.rate, args.max_snr))
+        freeze(args.root, args.output, profile(args.rb, args.rate, args.max_snr, args.channel_profile))
     else:
         Path(args.output).mkdir(parents=True, exist_ok=True)
-        review(args.root, args.selection, args.output, profile(args.rb, args.rate, args.max_snr))
+        review(args.root, args.selection, args.output, profile(args.rb, args.rate, args.max_snr, args.channel_profile))
 
 
 if __name__ == "__main__":

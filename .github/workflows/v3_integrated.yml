@@ -27,7 +27,7 @@ jobs:
           command: addpath('mu_mimo','v2_mimo');v4ReceiverSelfTest;
   diagnose:
     needs: smoke
-    if: ${{ !contains(github.event.head_commit.message, '[full-evaluation]') }}
+    if: ${{ !contains(github.event.head_commit.message, '[full-evaluation]') && !contains(github.event.head_commit.message, '[calibrate]') }}
     strategy:
       fail-fast: false
       matrix:
@@ -54,6 +54,38 @@ jobs:
         with:
           name: physics-diagnostic-${{ matrix.scenario }}
           path: physics_diagnostic/
+          if-no-files-found: warn
+  calibrate:
+    needs: smoke
+    if: ${{ contains(github.event.head_commit.message, '[calibrate]') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        precoder: [ZF, PZF, MR]
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: v3-refined-frozen-model
+          run-id: 41946464299
+          github-token: ${{ github.token }}
+          path: v3_refined
+      - uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2025b
+          products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
+      - uses: matlab-actions/run-command@v3
+        with:
+          command: run_v4_train_pzf('integrated_receiver',true,'v3_refined/v3_model.mat',32,8,1,"${{ matrix.precoder }}");for bs=[32 64],o=struct('Precoder',"${{ matrix.precoder }}",'RetryModes',["None" "APP50"],'Methods',["LS on common packet" "LMMSE" "Aligned LMMSE" "Aligned CNN" "Perfect CSIR"],'AlignedModel',fullfile('integrated_receiver',lower("${{ matrix.precoder }}")+"_receiver.mat"),'NumRB',264);run_v3_mimo(bs,2,fullfile('calibration_measurement',"BS"+bs),[20 30 40],98000000,'v3_refined/v3_model.mat',[],o);end
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: calibration-${{ matrix.precoder }}
+          path: |
+            integrated_receiver/
+            calibration_measurement/
           if-no-files-found: warn
   train:
     if: ${{ contains(github.event.head_commit.message, '[full-evaluation]') }}
@@ -134,7 +166,7 @@ jobs:
           python-version: '3.12'
       - run: |
           python -m pip install numpy pandas matplotlib scipy
-          python tools/v3_integrated_analysis.py freeze validation integrated_selection/selection.json --rb 264
+          python tools/v3_integrated_analysis.py freeze validation integrated_selection/selection.json --rb 264 --channel-profile mobile
       - uses: actions/upload-artifact@v7
         with:
           name: integrated-selection
@@ -199,7 +231,7 @@ jobs:
           python-version: '3.12'
       - run: |
           python -m pip install numpy pandas matplotlib scipy
-          python tools/v3_integrated_analysis.py review integrated_tests integrated_selection/selection.json integrated_review --rb 264
+          python tools/v3_integrated_analysis.py review integrated_tests integrated_selection/selection.json integrated_review --rb 264 --channel-profile mobile
       - uses: actions/upload-artifact@v7
         with:
           name: V3-Integrated-Results

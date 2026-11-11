@@ -12,6 +12,15 @@ loaded=load(modelFile,'model');model=loaded.model;
 assert(model.Version==6 && model.Selection.(scheme)(1)==0);
 if ~isfolder(folder),mkdir(folder);end
 cfg=v3Config(32);r=v3Resources(cfg);
+% Refit the deployed transmitter's predictor before collecting receiver data.
+% These channel seeds are disjoint from receiver training, validation and test.
+txStats=v2Prior("init",r.UplinkLayout,0);
+for frame=1:64
+ txCfg=v3Config(32+32*mod(frame-1,2));
+ scene=v2Sounding(txCfg,r,97000000+frame);
+ txStats=v2Prior("accumulate",txStats,scene.ULCleanSamples,scene.ULTruth,r.UplinkLayout);
+end
+model.PriorsTX=v2Prior("finalize",txStats);clear txStats scene
 layouts=cell(1,8);
 for user=1:4
  layout=r.DownlinkLayout{user};
@@ -31,6 +40,9 @@ priors=calibrateVariance(priors,Y,[],0);
 [X,T]=examples(training,priors,r,useProjection);
 clear training
 receiver=model.Receivers.(scheme);receiver.PriorsRX=priors;
+% Use the same 22 transmitted references for LS and the matched estimators.
+legacyFields=intersect(fieldnames(receiver),{'LSInterpolation','PriorsLS'});
+if ~isempty(legacyFields),receiver=rmfield(receiver,legacyFields);end
 net=receiver.NetworkRX;
 loss=@v2RXLoss;
 if useProjection,loss=@v4AlignedLoss;end
@@ -61,6 +73,15 @@ receiver.TrainingChannels=trainFrames;receiver.ValidationChannels=validationFram
 receiver.TrainingPatches=24*trainFrames;receiver.ProjectionLoss=useProjection;
 receiver.TrainingBandwidthRB=66;receiver.TrainingCodeRate=cfg.Rate;
 receiver.TrainingSNR_dB=[0 40];
+receiver.PriorsTX=model.PriorsTX;
+receiver.TransmitterPriorChannels=64;receiver.TransmitterPriorSeedBase=97000000;
+% Prevent silently deploying a receiver trained for another channel/RF profile.
+receiver.TrainingChannelConfig=struct;
+for name=["OperatingProfile" "DelaySpread" "Speed" "SoundingSNR" "CarrierFrequency" "SubcarrierSpacing" ...
+ "PhaseNoiseLevel" "PhaseNoiseOffset" "InputBackoff" "AMPMDegrees" "FrequencyOffset" ...
+ "VerticalCorrelation" "HorizontalCorrelation" "UECorrelation" "CPFraction" "BeamWidth" "PhaseBits"]
+ receiver.TrainingChannelConfig.(name)=cfg.(name);
+end
 receiver.TrainingSeedBase=72000000;receiver.ValidationSeedBase=73000000;
 receiver.ValidationNormalizedMSE=[mean(target.^2,'all') mean((target-blend*residual).^2,'all')];
 save(fullfile(folder,lower(scheme)+"_receiver.mat"),'receiver','-v7.3');

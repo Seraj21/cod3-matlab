@@ -123,7 +123,7 @@ function currentDiagnostic(scenario,antennas,numRB,frames,scheme)
 % Causal controls use held-out paired seeds. Oracle variants are diagnostics only.
 addpath(pwd,'mu_mimo','v2_mimo');
 loaded=load('v3_refined/v3_model.mat','model');model=loaded.model;
-cfg=v3Config(antennas,numRB);perfectTX=false;perfectTiming=false;
+cfg=v3Config(antennas,numRB,"stressed");perfectTX=false;perfectTiming=false;
 switch scenario
  case "baseline"
  case "delay300",cfg.DelaySpread=300e-9;

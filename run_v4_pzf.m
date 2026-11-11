@@ -23,17 +23,26 @@ selection=model.Selection.(scheme);
 assert(model.Version==6 && selection(1)==0);
 rx=model.Receivers.(scheme);rx.BlendRX=rx.BlendRX*selection(2);
 if any(ismember(methods,["Matched LMMSE" "Matched CNN"]))
- matched=loadReceiver(matchedFile,model,false,scheme,cfg.Rate);
+ matched=loadReceiver(matchedFile,model,false,scheme,cfg);
 end
 if any(ismember(methods,["Aligned CNN" "Aligned LMMSE"]))
- aligned=loadReceiver(alignedFile,model,true,scheme,cfg.Rate);
+ aligned=loadReceiver(alignedFile,model,true,scheme,cfg);
 end
+txPriors=model.PriorsTX;
+if exist('aligned','var'),txPriors=aligned.PriorsTX;end
 needTruth=any(methods=="Perfect CSIR");
-rows=cell(frames*numel(snrDb)*numel(methods)*numel(modes)*cfg.Users,14);at=0;
+rows=cell(frames*numel(snrDb)*numel(methods)*numel(modes)*cfg.Users,17);at=0;
 for frame=1:frames
  scene=v2Sounding(cfg,r,seedOffset+frame);
  [grid,payload]=muPayload(cfg,r,muSeed(scene.Seed,70));
- tx=v2CEBase(scene.ULSamples,scene.ULNoise,r.UplinkLayout,model.PriorsTX);
+ % Scoring references never enter the channel estimator or the equalizer.
+ codedReference=zeros(r.CodedBits,cfg.Users,'int8');
+ symbolReference=complex(zeros(numel(r.DataIndices),cfg.Users));
+ for user=1:cfg.Users
+  codedReference(:,user)=r.Codec.encode(payload(:,user));
+  layer=grid(:,:,user);symbolReference(:,user)=layer(r.DataIndices);
+ end
+ tx=v2CEBase(scene.ULSamples,scene.ULNoise,r.UplinkLayout,txPriors);
  [weights,power]=v3Weights(tx.Wiener,tx.VarianceWiener,scheme,scene,r);
  assert(power.MaximumPowerError<1e-6);
  common=v2Waveform(scene,r,grid,weights,needTruth);
@@ -60,6 +69,7 @@ for frame=1:frames
      input=v3Receive(lsPacket,scene,r,snr,false,false);
     case "LS on common packet"
      internal="LS";
+     if exist('aligned','var'),receiver=aligned;end
     case "Perfect CSIR"
      input.Truth=oracleChannel;internal="Perfect";
     case "Perfect CSI"
@@ -77,11 +87,10 @@ for frame=1:frames
    end
    [h,v,observed]=v3EstimateRX(input,receiver,r,internal);input.Observed=observed;
    measureRetry=method~="Perfect CSI" && any(modes~="None");
-   if measureRetry
-    [errors,failed,detail,primary]=v2Decode(input,h,v,payload,cfg,r);
-   else
-    [errors,failed,detail]=v2Decode(input,h,v,payload,cfg,r);
-   end
+   [errors,failed,detail,primary]=v2Decode(input,h,v,payload,cfg,r);
+   preBER=mean((primary.LLR<0)~=codedReference,1);
+   evm=100*sqrt(mean(abs(primary.Symbols-symbolReference).^2,1)./mean(abs(symbolReference).^2,1));
+   estimatedSINR=-10*log10(max(mean(primary.Variance,1),eps));
    for mode=modes
     e=errors;f=failed;iterations=zeros(1,cfg.Users);
     if measureRetry && mode~="None" && any(failed)
@@ -91,14 +100,16 @@ for frame=1:frames
     for user=1:cfg.Users
      at=at+1;
      rows(at,:)={antennas,scene.Seed,snr,char(method),char(mode),user,r.PayloadBits, ...
-      e(user),f(user),errors(user),failed(user),iterations(user),detail.SRSBeamAccepted(user),char(scheme)};
+      e(user),f(user),errors(user),failed(user),iterations(user),detail.SRSBeamAccepted(user),char(scheme), ...
+      preBER(user),evm(user),estimatedSINR(user)};
     end
    end
   end
  end
  if ~isfolder(folder),mkdir(folder);end
  table=cell2table(rows(1:at,:),'VariableNames',{'BS','ChannelSeed','SNR_dB','Estimator','Retry', ...
-  'UE','PayloadBits','Errors','CRCFailed','BaselineErrors','BaselineCRCFailed','ExtraIterations','SRSBeamAccepted','Precoder'});
+  'UE','PayloadBits','Errors','CRCFailed','BaselineErrors','BaselineCRCFailed','ExtraIterations','SRSBeamAccepted','Precoder', ...
+  'PrimaryPreLDPC_BER','PrimaryEVM_percent','PrimaryEstimatedSINR_dB'});
  writetable(table,fullfile(folder,'pzf_slots.csv'));
  fprintf('%s BS%d channel %d/%d seed%d complete\n',scheme,antennas,frame,frames,scene.Seed);
 end
@@ -106,9 +117,23 @@ assert(at==size(rows,1));
 settings=struct('FrameDuration',r.FrameDuration,'CodeRate',cfg.Rate,'CodedBits',r.CodedBits, ...
  'PayloadBits',r.PayloadBits,'SeedOffset',seedOffset,'SNR_dB',snrDb,'FrameCount',frames,'Config',cfg,'Precoder',char(scheme));
 save(fullfile(folder,'pzf_settings.mat'),'settings');
+% Emit an auditable high-SNR summary; job success alone is not link success.
+for method=methods
+ for mode=modes
+  t=table(string(table.Estimator)==method & string(table.Retry)==mode & table.SNR_dB==max(snrDb),:);
+  correct=nnz(t.Errors==0 & ~t.CRCFailed);
+  summary=struct('BS',antennas,'Precoder',scheme,'Estimator',method,'Retry',mode, ...
+   'SNR_dB',max(snrDb),'Frames',frames,'BER',sum(t.Errors)/sum(t.PayloadBits), ...
+   'CorrectBlocks',correct,'Blocks',height(t),'BLER',1-correct/height(t), ...
+   'Goodput_Mbps',correct*r.PayloadBits/(frames*r.FrameDuration*1e6), ...
+   'PrimaryPreLDPC_BER',mean(t.PrimaryPreLDPC_BER),'PrimaryEVM_percent',mean(t.PrimaryEVM_percent));
+  fprintf('V3_LINK_SUMMARY %s\n',jsonencode(summary));
+ end
 end
-function receiver=loadReceiver(file,model,projection,scheme,rate)
+end
+function receiver=loadReceiver(file,model,projection,scheme,cfg)
 loaded=load(file,'receiver');receiver=loaded.receiver;
+rate=cfg.Rate;
 % Older PZF receivers inherit the geometry signature before V3 assembly.
 expected=model.Signature;expected.TargetCodeRate=rate;
 legacy=model.Receivers.(scheme).Signature;legacy.TargetCodeRate=rate;
@@ -118,4 +143,10 @@ assert(receiver.Version==model.Version && receiver.Scheme==scheme && ...
  receiver.ProjectionLoss==projection && receiver.TrainingBandwidthRB==66 && ...
  receiver.PilotMode==string(model.Signature.PilotMode) && ...
  receiver.TrainingCodeRate==rate,'Receiver training conditions do not match deployment');
+assert(isfield(receiver,'TrainingChannelConfig'),'Retrain receiver with explicit channel configuration');
+assert(isfield(receiver,'PriorsTX'),'Retrain the transmitter prior for this operating point');
+for name=string(fieldnames(receiver.TrainingChannelConfig)).'
+ assert(isequal(receiver.TrainingChannelConfig.(name),cfg.(name)), ...
+  'Receiver channel configuration mismatch: %s',name);
+end
 end
