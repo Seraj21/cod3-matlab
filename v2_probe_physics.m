@@ -209,7 +209,7 @@ if nargin<7,orthogonal=false;end
 addpath(pwd,'mu_mimo','v2_mimo');
 loaded=load(fullfile('pilot_calibration','integrated_receiver',lower(scheme)+"_receiver.mat"),'receiver');
 receiver=loaded.receiver;
-assert(ismember(width,[1 4 24]));
+assert(ismember(width,[1 4 12 24]));
 cfg=v3Config(32,66,"mobile");cfg.BeamWidth=width;cfg.PrecoderTimeMode=char(timeMode);cfg.OrthogonalDMRS=orthogonal;r=v3Resources(cfg);
 layouts=cell(1,8);
 for u=1:4

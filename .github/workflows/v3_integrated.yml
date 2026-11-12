@@ -1,4 +1,4 @@
-name: Integrated V3 200 MHz orthogonal reference validation
+name: Integrated V3 200 MHz pilot coherence validation
 on:
   push:
     branches: [mu-cnn-v2]
@@ -62,7 +62,7 @@ jobs:
       fail-fast: false
       matrix:
         precoder: [ZF, PZF, MR]
-        width: [24]
+        width: [12]
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
