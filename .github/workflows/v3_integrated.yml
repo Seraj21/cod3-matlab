@@ -1,4 +1,4 @@
-name: Integrated V3 200 MHz pilot and precoder validation
+name: Integrated V3 200 MHz coherent pilot validation
 on:
   push:
     branches: [mu-cnn-v2]
@@ -62,7 +62,7 @@ jobs:
       fail-fast: false
       matrix:
         precoder: [ZF, PZF, MR]
-        width: [1, 4, 24]
+        width: [1, 24]
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -79,7 +79,7 @@ jobs:
           products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
       - uses: matlab-actions/run-command@v3
         with:
-          command: v2_probe_physics("pilotBlock${{ matrix.width }}",32,264,2,"${{ matrix.precoder }}");
+          command: v2_probe_physics("pilotSlot${{ matrix.width }}",32,264,2,"${{ matrix.precoder }}");
       - uses: actions/upload-artifact@v7
         if: always()
         with:

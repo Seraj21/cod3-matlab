@@ -5,7 +5,9 @@ if nargin>0
  if nargin<4,frames=2;end
  if nargin<5,scheme="ZF";end
  if startsWith(string(scenario),"pilotBlock")
-  pilotDiagnostic(str2double(extractAfter(string(scenario),"pilotBlock")),antennas,numRB,frames,string(scheme));
+  pilotDiagnostic(str2double(extractAfter(string(scenario),"pilotBlock")),antennas,numRB,frames,string(scheme),"per-symbol");
+ elseif startsWith(string(scenario),"pilotSlot")
+  pilotDiagnostic(str2double(extractAfter(string(scenario),"pilotSlot")),antennas,numRB,frames,string(scheme),"slot");
  else
   currentDiagnostic(string(scenario),antennas,numRB,frames,string(scheme));
  end
@@ -199,13 +201,13 @@ cfg.Quiet=true;cfg.PhaseNoiseLevel=[-300 -300 -300];
 cfg.InputBackoff=80;cfg.AMPMDegrees=0;cfg.FrequencyOffset=0;
 end
 
-function pilotDiagnostic(width,antennas,numRB,frames,scheme)
+function pilotDiagnostic(width,antennas,numRB,frames,scheme,timeMode)
 % Paired deployment audit: independently refit each changed pilot/precoder model.
 addpath(pwd,'mu_mimo','v2_mimo');
 loaded=load(fullfile('pilot_calibration','integrated_receiver',lower(scheme)+"_receiver.mat"),'receiver');
 receiver=loaded.receiver;
 assert(ismember(width,[1 4 24]));
-cfg=v3Config(32,66);cfg.BeamWidth=width;r=v3Resources(cfg);
+cfg=v3Config(32,66);cfg.BeamWidth=width;cfg.PrecoderTimeMode=char(timeMode);r=v3Resources(cfg);
 layouts=cell(1,8);
 for u=1:4
  layouts{u}=r.DownlinkLayout{u};layouts{u}.Label="Own_"+layouts{u}.Label;
@@ -213,7 +215,7 @@ for u=1:4
 end
 stats=v2Prior("init",layouts,4);
 for frame=1:24
- cfg=v3Config(32+32*mod(frame-1,2),66);cfg.BeamWidth=width;
+ cfg=v3Config(32+32*mod(frame-1,2),66);cfg.BeamWidth=width;cfg.PrecoderTimeMode=char(timeMode);
  scene=v2Sounding(cfg,r,99000000+frame);
  tx=v2CEBase(scene.ULSamples,scene.ULNoise,r.UplinkLayout,receiver.PriorsTX);
  weights=v3Weights(tx.Wiener,tx.VarianceWiener,scheme,scene,r);
@@ -226,8 +228,8 @@ for frame=1:24
  end
 end
 receiver.PriorsRX=v2Prior("finalize",stats);clear stats
-cfg=v3Config(antennas,numRB);cfg.BeamWidth=width;r=v3Resources(cfg);
-rows=cell(0,14);
+cfg=v3Config(antennas,numRB);cfg.BeamWidth=width;cfg.PrecoderTimeMode=char(timeMode);r=v3Resources(cfg);
+rows=cell(0,15);
 for frame=1:frames
  scene=v2Sounding(cfg,r,98000000+frame);
  tx=v2CEBase(scene.ULSamples,scene.ULNoise,r.UplinkLayout,receiver.PriorsTX);
@@ -249,13 +251,13 @@ for frame=1:frames
    good=~failed(u) && errors(u)==0;
    rows(end+1,:)={char(scheme),width,antennas,frame,u,char(method),r.PayloadBits,errors(u), ...
     double(failed(u)),double(good)*r.PayloadBits/r.FrameDuration/1e6, ...
-    mean((primary.LLR(:,u)<0)~=coded),evm,nmse,mean(primary.Variance(:,u))}; %#ok<AGROW>
+    mean((primary.LLR(:,u)<0)~=coded),evm,nmse,mean(primary.Variance(:,u)),char(timeMode)}; %#ok<AGROW>
   end
  end
 end
 T=cell2table(rows,'VariableNames',{'Precoder','BeamWidth','BS','Frame','UE','Estimator','PayloadBits', ...
- 'Errors','CRCFailed','Goodput_Mbps','PreLDPC_BER','EVM_percent','ChannelNMSE','EffectiveVariance'});
+ 'Errors','CRCFailed','Goodput_Mbps','PreLDPC_BER','EVM_percent','ChannelNMSE','EffectiveVariance','PrecoderTimeMode'});
 if ~isfolder('physics_diagnostic'),mkdir('physics_diagnostic');end
-writetable(T,fullfile('physics_diagnostic',"pilots_"+scheme+"_W"+width+".csv"));
+writetable(T,fullfile('physics_diagnostic',"pilots_"+scheme+"_W"+width+"_"+timeMode+".csv"));
 fprintf('PILOT_AUDIT_RESULT %s\n',jsonencode(table2struct(T)));
 end

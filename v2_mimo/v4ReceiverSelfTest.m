@@ -48,5 +48,22 @@ for numRB=[66 264]
    'Removed common phase must not inflate the LLR noise variance');
  end
 end
+% The optional coherent precoder must preserve power, CDM pairs and time support.
+cfg=v3Config(32,12);cfg.BeamWidth=24;cfg.PrecoderTimeMode='slot';r=v3Resources(cfg);
+scene=struct('Config',cfg,'Front',muFrontEnd(32,8,.7,.3));
+stream=RandStream('mt19937ar','Seed',71000303);
+h=complex(randn(stream,r.K,r.L,8,4),randn(stream,r.K,r.L,8,4));
+for scheme=["MR" "ZF" "PZF"]
+ [weights,diagnostic]=v3Weights(h,.01*ones(size(h)),scheme,scene,r);
+ assert(diagnostic.MaximumPowerError<1e-6);
+ reference=repmat(weights(:,:,:,6),1,1,1,7);
+ assert(max(abs(weights(:,:,:,6:12)-reference),[],'all')<3e-7, ...
+  'Coherent precoder changed between reference and data symbols');
+ for group=1:numel(r.DMRSGroups)
+  pairs=r.DMRSGroups{group}.Pairs;
+  assert(max(abs(weights(:,:,pairs(1,:),6)-weights(:,:,pairs(2,:),6)),[],'all')<3e-7, ...
+   'CDM pilot pair uses inconsistent precoders');
+ end
+end
 fprintf('V4_RECEIVER_SELF_TEST_PASS: rate 3/4, 66/264 RB, QAM and AWGN round trips\n');
 end
