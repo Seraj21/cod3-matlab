@@ -282,7 +282,9 @@ end
 % Keep the same first-pass four-branch combiner for every ablation.
 cfg.DecoderDual=false;
 controls=["Baseline" "PTRSAmplitude" "OracleSymbolGain" "OracleVariance" "OracleGainVariance"];
-rows=struct([]);symbolRows=struct([]);
+% Accumulate scalar records in cells; fieldless struct([]) rejects indexed
+% assignment of a record with fields in MATLAB.
+rows={};symbolRows={};
 for frame=1:frames
  scene=v2Sounding(cfg,r,99600000+frame);
  tx=v2CEBase(scene.ULSamples,scene.ULNoise,r.UplinkLayout,receiver.PriorsTX);
@@ -305,7 +307,7 @@ for frame=1:frames
     mask=r.DataTimes==l;
     gain(l)=sum(original(mask).*conj(reference(mask)))/sum(abs(reference(mask)).^2);
     residual=original(mask)-reference(mask);
-    symbolRows(end+1)=struct('Precoder',char(scheme),'BS',antennas,'Frame',frame, ...
+    symbolRows{end+1}=struct('Precoder',char(scheme),'BS',antennas,'Frame',frame, ...
      'ChannelSeed',scene.Seed,'Estimator',char(method),'UE',u,'Symbol',l, ...
      'PTRSAmplitude',primary.PTRSAmplitude(l,u),'OracleGainAmplitude',abs(gain(l)), ...
      'OracleGainPhase_deg',angle(gain(l))*180/pi,'MeasuredMSE',mean(abs(residual).^2), ...
@@ -338,7 +340,7 @@ for frame=1:frames
     [decoded,failed]=r.Codec.decode(restored,50,'Layered belief propagation');
     errors=nnz(decoded~=payload(:,u));correct=~failed && errors==0;
     mse=mean(abs(z-reference).^2);oracleControl=startsWith(control,"Oracle");
-    rows(end+1)=struct('Precoder',char(scheme),'BS',antennas,'NumRB',numRB, ...
+    rows{end+1}=struct('Precoder',char(scheme),'BS',antennas,'NumRB',numRB, ...
      'Frame',frame,'ChannelSeed',scene.Seed,'SNR_dB',40,'Estimator',char(method),'UE',u, ...
      'Control',char(control),'UsesPayloadTruth',oracleControl, ...
      'UsesTrueChannel',method=="Perfect",'PayloadBits',r.PayloadBits,'Errors',errors, ...
@@ -352,7 +354,7 @@ for frame=1:frames
   end
  end
  if ~isfolder('physics_diagnostic'),mkdir('physics_diagnostic');end
- T=struct2table(rows);S=struct2table(symbolRows);
+ T=struct2table(vertcat(rows{:}));S=struct2table(vertcat(symbolRows{:}));
  prefix=fullfile('physics_diagnostic',"receiver_"+scheme+"_BS"+antennas);
  writetable(T,prefix+".csv");writetable(S,prefix+"_symbols.csv");
  settings=struct('Config',cfg,'SourceRun',43193721852,'ModelFile',modelFile, ...

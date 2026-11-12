@@ -1,4 +1,4 @@
-name: Integrated V3 200 MHz receiver reliability audit
+name: Integrated V3 200 MHz receiver audit
 on:
   push:
     branches: [mu-cnn-v2]
