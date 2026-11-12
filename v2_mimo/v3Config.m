@@ -1,9 +1,10 @@
 function cfg=v3Config(antennas,numRB,profile)
 if nargin<2,numRB=66;end
-if nargin<3,profile="mobile";end
+if nargin<3,profile="stressed";end
 cfg=v2Config(antennas,numRB);cfg.Version=6;cfg.Rate=3/4;
 profile=string(profile);assert(ismember(profile,["mobile" "stressed"]));
 cfg.OperatingProfile=char(profile);
+cfg.PrecoderTimeMode='per-symbol';
 if profile=="mobile"
  cfg.DelaySpread=300e-9;cfg.Speed=30;cfg.SoundingSNR=30;
 end

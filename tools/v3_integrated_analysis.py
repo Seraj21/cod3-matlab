@@ -96,6 +96,7 @@ def audit_settings(root, base, batches, points, p):
             assert np.isclose(cfg[name], value, rtol=1e-12, atol=0), (path, name)
         if p["channel_profile"] == "mobile":
             assert cfg["OperatingProfile"] == "mobile", path
+            assert cfg["BeamWidth"] == 1 and cfg["PrecoderTimeMode"] == "per-symbol", path
         observed.add(key)
     assert observed == expected, f"Missing settings for {expected - observed}"
 
@@ -119,6 +120,7 @@ def freeze(root, output, p):
     if p["channel_profile"] == "mobile":
         choice["OperatingProfile"] = p["channel_profile"]
         choice["ChannelConfig"] = p["channel"]
+        choice["PrecoderConfig"] = {"BeamWidth": 1, "PrecoderTimeMode": "per-symbol"}
     filtered = rows[(rows.Retry == selected_retry) & rows.Estimator.isin(CANDIDATES)]
     for precoder in PRECODERS:
         cnn_scores = scores(filtered[filtered.Precoder == precoder], "Estimator", CANDIDATES)
@@ -207,6 +209,7 @@ def review(root, selection, output, p):
     if p["channel_profile"] == "mobile":
         assert choice.get("OperatingProfile") == p["channel_profile"]
         assert choice.get("ChannelConfig") == p["channel"]
+        assert choice.get("PrecoderConfig") == {"BeamWidth": 1, "PrecoderTimeMode": "per-symbol"}
     rows = load_paired(root, p)
     seed, frames = p["test_seed"], p["frames_per_batch"]
     points = p["test_points"]

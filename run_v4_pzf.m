@@ -18,7 +18,7 @@ assert(all(ismember(methods,["LS" "LS on common packet" "LMMSE" "Matched LMMSE" 
  "V3 CNN" "Matched CNN" "Aligned LMMSE" "Aligned CNN" "Perfect CSIR" "Perfect CSI"])));
 assert(all(diff(snrDb)>0) && min(snrDb)>=0 && max(snrDb)<=40);
 loaded=load(modelFile,'model');model=loaded.model;
-cfg=v3Config(antennas,numRB);r=v3Resources(cfg);
+cfg=v3Config(antennas,numRB,"mobile");r=v3Resources(cfg);
 selection=model.Selection.(scheme);
 assert(model.Version==6 && selection(1)==0);
 rx=model.Receivers.(scheme);rx.BlendRX=rx.BlendRX*selection(2);
@@ -145,6 +145,8 @@ assert(receiver.Version==model.Version && receiver.Scheme==scheme && ...
  receiver.TrainingCodeRate==rate,'Receiver training conditions do not match deployment');
 assert(isfield(receiver,'TrainingChannelConfig'),'Retrain receiver with explicit channel configuration');
 assert(isfield(receiver,'PriorsTX'),'Retrain the transmitter prior for this operating point');
+assert(isfield(receiver.TrainingChannelConfig,'PrecoderTimeMode'), ...
+ 'Retrain receiver with explicit pilot/precoder temporal support');
 for name=string(fieldnames(receiver.TrainingChannelConfig)).'
  assert(isequal(receiver.TrainingChannelConfig.(name),cfg.(name)), ...
   'Receiver channel configuration mismatch: %s',name);

@@ -207,7 +207,7 @@ addpath(pwd,'mu_mimo','v2_mimo');
 loaded=load(fullfile('pilot_calibration','integrated_receiver',lower(scheme)+"_receiver.mat"),'receiver');
 receiver=loaded.receiver;
 assert(ismember(width,[1 4 24]));
-cfg=v3Config(32,66);cfg.BeamWidth=width;cfg.PrecoderTimeMode=char(timeMode);r=v3Resources(cfg);
+cfg=v3Config(32,66,"mobile");cfg.BeamWidth=width;cfg.PrecoderTimeMode=char(timeMode);r=v3Resources(cfg);
 layouts=cell(1,8);
 for u=1:4
  layouts{u}=r.DownlinkLayout{u};layouts{u}.Label="Own_"+layouts{u}.Label;
@@ -215,7 +215,7 @@ for u=1:4
 end
 stats=v2Prior("init",layouts,4);
 for frame=1:24
- cfg=v3Config(32+32*mod(frame-1,2),66);cfg.BeamWidth=width;cfg.PrecoderTimeMode=char(timeMode);
+ cfg=v3Config(32+32*mod(frame-1,2),66,"mobile");cfg.BeamWidth=width;cfg.PrecoderTimeMode=char(timeMode);
  scene=v2Sounding(cfg,r,99000000+frame);
  tx=v2CEBase(scene.ULSamples,scene.ULNoise,r.UplinkLayout,receiver.PriorsTX);
  weights=v3Weights(tx.Wiener,tx.VarianceWiener,scheme,scene,r);
@@ -228,7 +228,7 @@ for frame=1:24
  end
 end
 receiver.PriorsRX=v2Prior("finalize",stats);clear stats
-cfg=v3Config(antennas,numRB);cfg.BeamWidth=width;cfg.PrecoderTimeMode=char(timeMode);r=v3Resources(cfg);
+cfg=v3Config(antennas,numRB,"mobile");cfg.BeamWidth=width;cfg.PrecoderTimeMode=char(timeMode);r=v3Resources(cfg);
 rows=cell(0,15);
 for frame=1:frames
  scene=v2Sounding(cfg,r,98000000+frame);

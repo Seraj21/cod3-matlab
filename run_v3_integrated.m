@@ -14,7 +14,7 @@ if numRB==264
  validationSNR=[0 6 10 14 20 25 30 35 40];
 end
 methods=["LS on common packet" "LMMSE" "Aligned LMMSE"];
-cfg=v3Config(antennas,numRB);
+cfg=v3Config(antennas,numRB,"mobile");
 if stage=="validation"
  assert(batch<4);
  modes=["APP50" "CSI-APP50"];
@@ -28,6 +28,14 @@ else
   'Repeat validation before testing the new code rate and SNR range');
  assert(isfield(choice,'OperatingProfile') && string(choice.OperatingProfile)==string(cfg.OperatingProfile), ...
   'Repeat validation before changing the channel operating profile');
+ assert(isfield(choice,'ChannelConfig') && isfield(choice,'PrecoderConfig'), ...
+  'Repeat validation with explicit channel and precoder configuration');
+ for group=["ChannelConfig" "PrecoderConfig"]
+  for name=string(fieldnames(choice.(group))).'
+   assert(isequal(choice.(group).(name),cfg.(name)), ...
+    'Validation/deployment configuration mismatch: %s',name);
+  end
+ end
  if isfield(choice,'NumRB'),assert(choice.NumRB==numRB);else,assert(numRB==66);end
  candidate=string(choice.CNN.(precoder));
  assert(ismember(candidate,["V3 CNN" "Aligned CNN"]));

@@ -1,4 +1,4 @@
-name: Integrated V3 200 MHz coherent pilot validation
+name: Integrated V3 200 MHz matched receiver acceptance
 on:
   push:
     branches: [mu-cnn-v2]
@@ -24,7 +24,7 @@ jobs:
           products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
       - uses: matlab-actions/run-command@v3
         with:
-          command: addpath('mu_mimo','v2_mimo');v4ReceiverSelfTest;
+          command: addpath('mu_mimo','v2_mimo');v4ReceiverSelfTest;checks=runtests({'v2_mimo/tests/testV2Core.m','v2_mimo/tests/testV3Receiver.m'});assertSuccess(checks);
   diagnose:
     needs: smoke
     if: ${{ !contains(github.event.head_commit.message, '[full-evaluation]') && !contains(github.event.head_commit.message, '[calibrate]') && !contains(github.event.head_commit.message, '[pilot-audit]') }}
@@ -109,7 +109,7 @@ jobs:
           products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
       - uses: matlab-actions/run-command@v3
         with:
-          command: run_v4_train_pzf('integrated_receiver',true,'v3_refined/v3_model.mat',32,8,1,"${{ matrix.precoder }}");for bs=[32 64],o=struct('Precoder',"${{ matrix.precoder }}",'RetryModes',["None" "APP50"],'Methods',["LS on common packet" "LMMSE" "Aligned LMMSE" "Aligned CNN" "Perfect CSIR"],'AlignedModel',fullfile('integrated_receiver',lower("${{ matrix.precoder }}")+"_receiver.mat"),'NumRB',264);run_v3_mimo(bs,2,fullfile('calibration_measurement',"BS"+bs),[20 30 40],98000000,'v3_refined/v3_model.mat',[],o);end
+          command: run_v4_train_pzf('integrated_receiver',true,'v3_refined/v3_model.mat',128,32,10,"${{ matrix.precoder }}");for bs=[32 64],o=struct('Precoder',"${{ matrix.precoder }}",'RetryModes',["None" "APP50"],'Methods',["LS on common packet" "LMMSE" "Aligned LMMSE" "Aligned CNN" "Perfect CSIR"],'AlignedModel',fullfile('integrated_receiver',lower("${{ matrix.precoder }}")+"_receiver.mat"),'NumRB',264);run_v3_mimo(bs,2,fullfile('calibration_measurement',"BS"+bs),[30 40],99500000,'v3_refined/v3_model.mat',[],o);end
       - uses: actions/upload-artifact@v7
         if: always()
         with:

@@ -11,12 +11,12 @@ addpath(pwd,'mu_mimo','v2_mimo');
 loaded=load(modelFile,'model');model=loaded.model;
 assert(model.Version==6 && model.Selection.(scheme)(1)==0);
 if ~isfolder(folder),mkdir(folder);end
-cfg=v3Config(32);r=v3Resources(cfg);
+cfg=v3Config(32,66,"mobile");r=v3Resources(cfg);
 % Refit the deployed transmitter's predictor before collecting receiver data.
 % These channel seeds are disjoint from receiver training, validation and test.
 txStats=v2Prior("init",r.UplinkLayout,0);
 for frame=1:64
- txCfg=v3Config(32+32*mod(frame-1,2));
+ txCfg=v3Config(32+32*mod(frame-1,2),66,"mobile");
  scene=v2Sounding(txCfg,r,97000000+frame);
  txStats=v2Prior("accumulate",txStats,scene.ULCleanSamples,scene.ULTruth,r.UplinkLayout);
 end
@@ -79,7 +79,7 @@ receiver.TransmitterPriorChannels=64;receiver.TransmitterPriorSeedBase=97000000;
 receiver.TrainingChannelConfig=struct;
 for name=["OperatingProfile" "DelaySpread" "Speed" "SoundingSNR" "CarrierFrequency" "SubcarrierSpacing" ...
  "PhaseNoiseLevel" "PhaseNoiseOffset" "InputBackoff" "AMPMDegrees" "FrequencyOffset" ...
- "VerticalCorrelation" "HorizontalCorrelation" "UECorrelation" "CPFraction" "BeamWidth" "PhaseBits"]
+ "VerticalCorrelation" "HorizontalCorrelation" "UECorrelation" "CPFraction" "BeamWidth" "PhaseBits" "PrecoderTimeMode"]
  receiver.TrainingChannelConfig.(name)=cfg.(name);
 end
 receiver.TrainingSeedBase=72000000;receiver.ValidationSeedBase=73000000;
@@ -92,7 +92,7 @@ function [records,stats,conditions]=collect(model,r,count,seedBase,stats,trainin
 records=cell(8*count,1);at=0;conditions=zeros(count,5);
 for frame=1:count
  is64=mod(frame-1,2);bs=32+32*is64;
- cfg=v3Config(bs);seed=seedBase+frame;
+ cfg=v3Config(bs,66,"mobile");seed=seedBase+frame;
  scene=v2Sounding(cfg,r,seed);
  tx=v2CEBase(scene.ULSamples,scene.ULNoise,r.UplinkLayout,model.PriorsTX);
  weights=v3Weights(tx.Wiener,tx.VarianceWiener,scheme,scene,r);
