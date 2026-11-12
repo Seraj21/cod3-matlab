@@ -65,5 +65,18 @@ for scheme=["MR" "ZF" "PZF"]
    'CDM pilot pair uses inconsistent precoders');
  end
 end
+% Disjoint pilots must identify each port even when H varies between tones.
+cfg=v3Config(32,12);baseline=v3Resources(cfg);cfg.OrthogonalDMRS=true;r=v3Resources(cfg);
+assert(isequal(r.DataIndices,baseline.DataIndices) && r.CodedBits==baseline.CodedBits);
+assert(max(abs(sum(abs(r.ReferenceGrid).^2,3)-sum(abs(baseline.ReferenceGrid).^2,3)),[],'all')<1e-10);
+truth=complex(randn(stream,r.K,r.L,16,4),randn(stream,r.K,r.L,16,4));
+observed=sum(truth.*reshape(r.ReferenceGrid,r.K,r.L,1,4),4);
+samples=v3PilotObservations(observed,r);
+for user=1:4
+ mask=repmat(abs(r.ReferenceGrid(:,:,user))>0,1,1,16);
+ actual=samples(:,:,:,user);expected=truth(:,:,:,user);
+ assert(max(abs(actual(mask)-expected(mask)))<1e-11, ...
+  'Orthogonal pilots failed to separate frequency-varying user channels');
+end
 fprintf('V4_RECEIVER_SELF_TEST_PASS: rate 3/4, 66/264 RB, QAM and AWGN round trips\n');
 end

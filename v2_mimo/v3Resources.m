@@ -1,6 +1,23 @@
 function r=v3Resources(cfg)
 % Use all already transmitted references; no new pilot RE or pilot power.
-r=muResources(cfg);r.DMRSLegacyLayouts=r.DownlinkLayout;
+r=muResources(cfg);
+% Diagnostic alternative: disjoint pilot tones avoid frequency-CDM leakage.
+% Preserve occupied RE, aggregate reference energy and the observation count.
+r.OrthogonalDMRS=isfield(cfg,'OrthogonalDMRS') && cfg.OrthogonalDMRS;
+if r.OrthogonalDMRS
+ original=r.DMRS;r.DMRS(:)=0;offsets=[1 3 2 4];
+ for user=1:cfg.Users
+  times=r.DownlinkLayout{user}.Times;
+  frequencies=offsets(user):4:r.K;
+  r.DMRS(frequencies,times,user)=2*sign(original(frequencies,times,user));
+  r.DownlinkLayout{user}=muPilotLayout(cfg.PRGWidth,r.L, ...
+   offsets(user):4:cfg.PRGWidth,times,.25,r.DownlinkLayout{user}.Label);
+ end
+ assert(max(abs(sum(abs(r.DMRS).^2,3)-sum(abs(original).^2,3)),[],'all')<1e-10);
+ assert(all(sum(abs(r.DMRS)>0,3)<=1,'all'));
+ r.ReferenceGrid=r.DMRS+r.PTRS;
+end
+r.DMRSLegacyLayouts=r.DownlinkLayout;
 for user=1:cfg.Users
  old=r.DownlinkLayout{user};p=old;
  p.Mask=old.Mask | abs(r.PTRS(1:cfg.PRGWidth,:,user))>0;
