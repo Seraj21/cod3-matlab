@@ -10,6 +10,32 @@ for noise=[.014 .2 1]
 end
 edge=v4SymbolLLR(symbols,repmat(.001,M,1),repmat(1e8,M,1),M);
 assert(all(isfinite(edge)));
+% Independent check of SphereDecoder's opposite LLR sign and whitening scale.
+constellation=qammod((0:511).',512,'UnitAveragePower',true);
+bitTable=zeros(512,9);
+for bit=1:9,bitTable(:,bit)=bitget(uint16((0:511).'),10-bit);end
+detector=comm.SphereDecoder('Constellation',constellation,'BitTable',bitTable, ...
+ 'DecisionType','Soft','InitialRadius','ZF solution');
+gain=[1.1-.25i .8+.1i];noise=.03;probe=constellation(1:17:end)+(.013-.021i);
+probe=[probe flipud(probe)];y=probe.*gain;
+actual=-detector(y/sqrt(noise),reshape(diag(gain)/sqrt(noise),1,2,2));
+for stream=1:2
+ expected=qamdemod(probe(:,stream),512,'UnitAveragePower',true,'OutputType','approxllr', ...
+  'NoiseVariance',noise/abs(gain(stream))^2);
+ assert(max(abs(actual(:,stream)-expected))<1e-8,'Sphere LLR sign, mapping or noise scale is incorrect');
+end
+release(detector);
+% Exercise the full joint receiver path with four coupled streams and CPE.
+cfg=v3Config(32,12);cfg.M=16;cfg.Qm=4;cfg.DecoderDual=false;
+cfg.RXDetector='Sphere';cfg.DecoderIterations=50;cfg.DecoderAlgorithm='Layered belief propagation';
+cfg.DetectorTimeLimit_s=60;r=v3Resources(cfg);
+[grid,payload]=muPayload(cfg,r,71000499);
+A=eye(4)+.12i*ones(4)+.08*diag(ones(3,1),1);
+h=repmat(reshape(repmat(A,4,1),1,1,16,4),r.K,r.L,1,1);
+input=struct('Observed',sum(h.*reshape(grid,r.K,r.L,1,4),4)*exp(.29i), ...
+ 'Noise',1e-3*ones(1,16));
+[errors,failed]=v2Decode(input,h,zeros(size(h)),payload,cfg,r);
+assert(all(errors==0 & ~failed),'Joint receiver failed coupled-stream noiseless round trip');
 % Compare every RV against the toolbox's independent standard-QAM matcher.
 for setup=[512 1024 .5;12000 16000 .75].'
  for qm=[4 8]

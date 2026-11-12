@@ -4,7 +4,9 @@ if nargin>0
  if nargin<3,numRB=264;end
  if nargin<4,frames=2;end
  if nargin<5,scheme="ZF";end
- if string(scenario)=="harqRecovery"
+ if string(scenario)=="firstPassJoint"
+  firstPassJoint(antennas,numRB,frames,string(scheme));
+ elseif string(scenario)=="harqRecovery"
   harqRecovery(antennas,numRB,frames,string(scheme));
  elseif string(scenario)=="receiverAudit"
   receiverDiagnostic(antennas,numRB,frames,string(scheme));
@@ -483,4 +485,83 @@ gate=struct('Precoder',scheme,'BS',antennas,'CorrectBlocks',sum(final.CorrectBlo
 fprintf('HARQ_ACCEPTANCE_RESULT %s\n',jsonencode(gate));
 assert(gate.AllCNNBlocksDelivered, ...
  'HARQ executed, but the CNN reliability acceptance gate was not met. Inspect saved results.');
+end
+
+function firstPassJoint(antennas,numRB,frames,scheme)
+% Receiver-only comparison: identical H estimate, data, pilots, power and noise.
+addpath(pwd,'mu_mimo','v2_mimo');
+loaded=load(fullfile('receiver_audit','integrated_receiver',lower(scheme)+"_receiver.mat"),'receiver');
+receiver=loaded.receiver;cfg=v3Config(antennas,numRB,"mobile");r=v3Resources(cfg);
+for name=string(fieldnames(receiver.TrainingChannelConfig)).'
+ assert(isequal(receiver.TrainingChannelConfig.(name),cfg.(name)), ...
+  'First-pass receiver configuration mismatch: %s',name);
+end
+assert(receiver.Scheme==scheme && receiver.TrainingCodeRate==cfg.Rate);
+assert(cfg.M==512 && cfg.Rate==.75 && r.PayloadBits==71280 && numRB==264);
+cfg.DecoderDual=false;cfg.DecoderIterations=50;cfg.DecoderAlgorithm='Layered belief propagation';
+cfg.DetectorTimeLimit_s=90;methods=["CNN" "Perfect" "LMMSE" "LS"];
+rows={};failures={};ceiling=cfg.Users*r.PayloadBits/r.FrameDuration/1e6;
+if ~isfolder('first_pass_joint'),mkdir('first_pass_joint');end
+prefix=fullfile('first_pass_joint',scheme+"_BS"+antennas);
+settings=struct('Config',cfg,'SourceReceiverRun',43193721852,'FramesRequested',frames, ...
+ 'SeedOffset',102000000,'SNR_dB',40,'FrameDuration',r.FrameDuration, ...
+ 'PayloadCeiling_Mbps',ceiling,'HARQ',false,'AddedPilotRE',0, ...
+ 'ComputeLimit_s_perUE',cfg.DetectorTimeLimit_s, ...
+ 'Warning','Radio-airtime goodput; detector CPU seconds are recorded separately, not a real-time hardware benchmark');
+save(prefix+"_settings.mat",'settings');
+for frame=1:frames
+ scene=v2Sounding(cfg,r,102000000+frame);
+ [grid,payload]=muPayload(cfg,r,muSeed(scene.Seed,70));
+ tx=v2CEBase(scene.ULSamples,scene.ULNoise,r.UplinkLayout,receiver.PriorsTX);
+ [weights,power]=v3Weights(tx.Wiener,tx.VarianceWiener,scheme,scene,r);
+ assert(power.MaximumPowerError<1e-6);
+ packet=v2Waveform(scene,r,grid,weights,true);
+ input=v3Receive(packet,scene,r,40,false,false);oracle=input.Truth;input.Truth=[];
+ for method=methods
+  local=input;if method=="Perfect",local.Truth=oracle;end
+  [h,v,observed]=v3EstimateRX(local,receiver,r,method);local.Observed=observed;
+  for detector=["Linear" "Sphere"]
+   cfg.RXDetector=char(detector);clock=tic;
+   try
+    [errors,failed,detail,primary]=v2Decode(local,h,v,payload,cfg,r);
+   catch exception
+    if ~strcmp(exception.identifier,'v2Decode:SphereBudget'),rethrow(exception);end
+    failure=struct('Precoder',char(scheme),'BS',antennas,'Frame',frame, ...
+     'Estimator',char(method),'Detector',char(detector),'Reason',exception.message, ...
+     'DetectorElapsed_s',toc(clock));failures{end+1}=failure; %#ok<AGROW>
+    writetable(struct2table(vertcat(failures{:})),prefix+"_incomplete.csv");
+    fprintf('FIRST_PASS_INCOMPLETE %s\n',jsonencode(failure));
+    continue
+   end
+   seconds=toc(clock);
+   for u=1:cfg.Users
+    coded=r.Codec.encode(payload(:,u));correct=~failed(u) && errors(u)==0;
+    rows{end+1}=struct('Precoder',char(scheme),'BS',antennas,'Frame',frame, ...
+     'ChannelSeed',scene.Seed,'SNR_dB',40,'Estimator',char(method), ...
+     'Detector',char(detector),'UE',u,'PayloadBits',r.PayloadBits, ...
+     'Errors',errors(u),'CRCFailed',failed(u),'CorrectBlock',correct, ...
+     'PreLDPC_BER',mean((primary.LLR(:,u)<0)~=coded), ...
+     'DetectorElapsed_s',seconds,'JointDetectionSeconds',detail.JointDetectionSeconds(u), ...
+     'RadioTransmissions',1,'FrameDuration',r.FrameDuration); %#ok<AGROW>
+   end
+   T=struct2table(vertcat(rows{:}));writetable(T,prefix+"_blocks.csv");
+   t=T(string(T.Estimator)==method & string(T.Detector)==detector,:);
+   completeFrames=numel(unique(t.Frame));
+   summary=struct('Precoder',scheme,'BS',antennas,'Estimator',method,'Detector',detector, ...
+    'FramesCompleted',completeFrames,'FramesRequestedSoFar',frame,'SNR_dB',40, ...
+    'BER',sum(t.Errors)/sum(t.PayloadBits),'CorrectBlocks',nnz(t.CorrectBlock),'Blocks',height(t), ...
+    'BLER',1-nnz(t.CorrectBlock)/height(t),'PreLDPC_BER',mean(t.PreLDPC_BER), ...
+    'Goodput_Mbps',nnz(t.CorrectBlock)*r.PayloadBits/(completeFrames*r.FrameDuration*1e6), ...
+    'PayloadCeiling_Mbps',ceiling,'HARQ',false,'SampleIncomplete',completeFrames~=frame);
+   fprintf('FIRST_PASS_JOINT_RESULT %s\n',jsonencode(summary));
+  end
+ end
+end
+target=T(string(T.Estimator)=="CNN" & string(T.Detector)=="Sphere",:);
+gate=struct('Precoder',scheme,'BS',antennas,'ExpectedBlocks',frames*cfg.Users, ...
+ 'CompletedBlocks',height(target),'CorrectBlocks',nnz(target.CorrectBlock), ...
+ 'Passed',height(target)==frames*cfg.Users && all(target.CorrectBlock), ...
+ 'Requirement','All CNN blocks delivered on first transmission; no extra pilots, lower code rate or HARQ');
+fprintf('FIRST_PASS_ACCEPTANCE_RESULT %s\n',jsonencode(gate));
+assert(gate.Passed,'First-pass reliability acceptance was not met. Keep baseline and failure records.');
 end

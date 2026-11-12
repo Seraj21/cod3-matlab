@@ -6,7 +6,8 @@ capture=nargout>3;
 [bits,failed,details,primary]=pass(input,h,variance,cfg,r,false,users,capture);
 failed(~users)=false;
 firstFailed=failed;
-if cfg.DecoderDual && any(failed)
+joint=isfield(cfg,'RXDetector') && string(cfg.RXDetector)=="Sphere";
+if cfg.DecoderDual && any(failed) && ~joint
  [retry,retryFailed,retryDetails]=pass(input,h,variance,cfg,r,true,failed,false);
  accepted=failed & ~retryFailed;
  bits(:,accepted)=retry(:,accepted);failed(accepted)=false;
@@ -22,6 +23,8 @@ end
 function [decoded,failed,details,primary]=pass(input,h,channelVariance,cfg,r,fixedBeam,users,capture)
 decoded=zeros(r.PayloadBits,cfg.Users,'int8');failed=true(1,cfg.Users);
 evm=zeros(1,cfg.Users);
+detectionSeconds=zeros(1,cfg.Users);
+joint=isfield(cfg,'RXDetector') && string(cfg.RXDetector)=="Sphere";
 primary=struct;
 if capture
  primary.Symbols=zeros(numel(r.DataIndices),cfg.Users,'like',input.Observed);
@@ -54,6 +57,7 @@ for u=find(users)
  [~,times]=ind2sub([r.K r.L],indices);
  phasor=accumarray(times,equalized(indices).*conj(reference(indices)),[r.L 1]);
  valid=find(abs(phasor)>0);
+ phase=zeros(r.L,1);
  if capture
   % Diagnostic only: expose the gain measured from known isolated PTRS.
   % Do not alter production symbols, channel estimates or LLR variance here.
@@ -82,12 +86,19 @@ for u=find(users)
  end
  extra=interp1(times,extra,min(times(end),max(times(1),(1:r.L).')),'linear');
  effectiveVariance=max(1e-7,softVariance(r.DataIndices)+extra(r.DataTimes));
- llr=qamdemod(equalized(r.DataIndices),cfg.M,'OutputType','approxllr', ...
-     'UnitAveragePower',true,'NoiseVariance',1);
- llr=reshape(reshape(llr,cfg.Qm,[])./reshape(effectiveVariance,1,[]),[],1);
+ if joint
+  [llr,detectionSeconds(u)]=jointLLR(input.Observed(:,:,rows),G,disturbance,phase,u,cfg,r);
+ else
+  llr=qamdemod(equalized(r.DataIndices),cfg.M,'OutputType','approxllr', ...
+      'UnitAveragePower',true,'NoiseVariance',1);
+  llr=reshape(reshape(llr,cfg.Qm,[])./reshape(effectiveVariance,1,[]),[],1);
+ end
  restored=zeros(r.CodedBits,1);restored(r.BitOrder)=llr;
  restored=max(-50,min(50,restored));
- [decoded(:,u),failed(u)]=r.Codec.decode(restored);
+ iterations=20;algorithm='Normalized min-sum';
+ if isfield(cfg,'DecoderIterations'),iterations=cfg.DecoderIterations;end
+ if isfield(cfg,'DecoderAlgorithm'),algorithm=cfg.DecoderAlgorithm;end
+ [decoded(:,u),failed(u)]=r.Codec.decode(restored,iterations,algorithm);
  if capture
   % Project the desired-channel error through the same receive combiner.
   squaredWeights=abs(w).^2;
@@ -104,5 +115,47 @@ for u=find(users)
  end
  evm(u)=mean(effectiveVariance);
 end
-details=struct('MeanEffectiveVariance',evm);
+details=struct('MeanEffectiveVariance',evm,'JointDetectionSeconds',detectionSeconds);
+end
+
+function [llr,seconds]=jointLLR(observed,G,disturbance,phase,user,cfg,r)
+% Joint finite-alphabet detection uses this UE's antennas only, never payload.
+% Whiten BOTH y and H so SphereDecoder's unscaled distance is a noise metric.
+R=size(observed,3);assert(R>=cfg.Users);
+constellation=qammod((0:cfg.M-1).',cfg.M,'UnitAveragePower',true);
+bitTable=zeros(cfg.M,cfg.Qm);
+for bit=1:cfg.Qm,bitTable(:,bit)=bitget(uint16((0:cfg.M-1).'),cfg.Qm-bit+1);end
+detector=comm.SphereDecoder('Constellation',constellation,'BitTable',bitTable, ...
+    'DecisionType','Soft','InitialRadius','ZF solution');
+clock=tic;limit=Inf;
+if isfield(cfg,'DetectorTimeLimit_s'),limit=cfg.DetectorTimeLimit_s;end
+G=reshape(G,R,cfg.Users,r.K*r.L);C=reshape(disturbance,R,R,r.K*r.L);
+y=reshape(observed,r.K*r.L,R);N=numel(r.DataIndices);llr=zeros(N*cfg.Qm,1);
+chunk=16;
+for first=1:chunk:N
+ selected=first:min(first+chunk-1,N);count=numel(selected);
+ yw=complex(zeros(count,R));hw=complex(zeros(count,cfg.Users,R));
+ for n=1:count
+  idx=r.DataIndices(selected(n));l=r.DataTimes(selected(n));
+  covariance=C(:,:,idx);covariance=(covariance+covariance')/2;
+  [factor,notPD]=chol(covariance,'lower');
+  if notPD
+   floorValue=max(1e-12,1e-9*real(trace(covariance))/R);
+   factor=chol(covariance+floorValue*eye(R),'lower');
+  end
+  channel=factor\G(:,:,idx);
+  symbol=factor\(y(idx,:).'*exp(-1i*phase(l)));
+  yw(n,:)=symbol.';hw(n,:,:)=reshape(channel.',1,cfg.Users,R);
+ end
+ if count~=chunk,release(detector);end
+ raw=detector(yw,hw);
+ % SphereDecoder uses log P(1)/P(0); LDPC/qamdemod use log P(0)/P(1).
+ values=-raw(:,user);
+ assert(all(isfinite(values)),'Joint detector produced non-finite LLRs');
+ llr((first-1)*cfg.Qm+(1:count*cfg.Qm))=values;
+ if toc(clock)>limit
+  error('v2Decode:SphereBudget','Joint detector exceeded %.0f s for one UE; no partial BER is reported.',limit);
+ end
+end
+seconds=toc(clock);
 end
