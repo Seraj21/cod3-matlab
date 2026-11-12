@@ -4,7 +4,11 @@ if nargin>0
  if nargin<3,numRB=264;end
  if nargin<4,frames=2;end
  if nargin<5,scheme="ZF";end
- currentDiagnostic(string(scenario),antennas,numRB,frames,string(scheme));
+ if startsWith(string(scenario),"pilotBlock")
+  pilotDiagnostic(str2double(extractAfter(string(scenario),"pilotBlock")),antennas,numRB,frames,string(scheme));
+ else
+  currentDiagnostic(string(scenario),antennas,numRB,frames,string(scheme));
+ end
  return
 end
 % Controlled validation: retain TDL-C/512-QAM/LDPC R=1/2 and RF impairments.
@@ -193,4 +197,65 @@ end
 function cfg=quietRadio(cfg)
 cfg.Quiet=true;cfg.PhaseNoiseLevel=[-300 -300 -300];
 cfg.InputBackoff=80;cfg.AMPMDegrees=0;cfg.FrequencyOffset=0;
+end
+
+function pilotDiagnostic(width,antennas,numRB,frames,scheme)
+% Paired deployment audit: independently refit each changed pilot/precoder model.
+addpath(pwd,'mu_mimo','v2_mimo');
+loaded=load(fullfile('pilot_calibration','integrated_receiver',lower(scheme)+"_receiver.mat"),'receiver');
+receiver=loaded.receiver;
+assert(ismember(width,[1 4 24]));
+cfg=v3Config(32,66);cfg.BeamWidth=width;r=v3Resources(cfg);
+layouts=cell(1,8);
+for u=1:4
+ layouts{u}=r.DownlinkLayout{u};layouts{u}.Label="Own_"+layouts{u}.Label;
+ layouts{u+4}=r.DownlinkLayout{u};layouts{u+4}.Label="Other_"+layouts{u+4}.Label;
+end
+stats=v2Prior("init",layouts,4);
+for frame=1:24
+ cfg=v3Config(32+32*mod(frame-1,2),66);cfg.BeamWidth=width;
+ scene=v2Sounding(cfg,r,99000000+frame);
+ tx=v2CEBase(scene.ULSamples,scene.ULNoise,r.UplinkLayout,receiver.PriorsTX);
+ weights=v3Weights(tx.Wiener,tx.VarianceWiener,scheme,scene,r);
+ [grid,~]=muPayload(cfg,r,muSeed(scene.Seed,70));
+ packet=v2Waveform(scene,r,grid,weights,true);
+ input=v3Receive(packet,scene,r,40,false,true);
+ for u=1:4
+  [clean,truth,layout]=v2RXCanonical(input,r,u,true);
+  stats=v2Prior("accumulate",stats,clean,truth,layout);
+ end
+end
+receiver.PriorsRX=v2Prior("finalize",stats);clear stats
+cfg=v3Config(antennas,numRB);cfg.BeamWidth=width;r=v3Resources(cfg);
+rows=cell(0,14);
+for frame=1:frames
+ scene=v2Sounding(cfg,r,98000000+frame);
+ tx=v2CEBase(scene.ULSamples,scene.ULNoise,r.UplinkLayout,receiver.PriorsTX);
+ weights=v3Weights(tx.Wiener,tx.VarianceWiener,scheme,scene,r);
+ [grid,payload]=muPayload(cfg,r,muSeed(scene.Seed,70));
+ packet=v2Waveform(scene,r,grid,weights,true);
+ input=v3Receive(packet,scene,r,40,false,false);
+ [oracle,~,~]=v3EstimateRX(input,receiver,r,"Perfect");
+ for method=["LS" "LMMSE" "Perfect"]
+  [h,v,observed]=v3EstimateRX(input,receiver,r,method);local=input;local.Observed=observed;
+  [~,failed,~,primary]=v2Decode(local,h,v,payload,cfg,r);
+  [decoded,failed]=v4Retry(primary,failed,cfg,r,"APP50");errors=sum(decoded~=payload,1);
+  for u=1:4
+   symbols=grid(:,:,u);symbols=symbols(r.DataIndices);coded=r.Codec.encode(payload(:,u));
+   evm=100*sqrt(mean(abs(primary.Symbols(:,u)-symbols).^2)/mean(abs(symbols).^2));
+   branches=(u-1)*4+(1:4);mask=repmat(r.DataMask,1,1,4,4);
+   delta=h(:,:,branches,:)-oracle(:,:,branches,:);target=oracle(:,:,branches,:);
+   nmse=sum(abs(delta(mask)).^2)/max(sum(abs(target(mask)).^2),eps);
+   good=~failed(u) && errors(u)==0;
+   rows(end+1,:)={char(scheme),width,antennas,frame,u,char(method),r.PayloadBits,errors(u), ...
+    double(failed(u)),double(good)*r.PayloadBits/r.FrameDuration/1e6, ...
+    mean((primary.LLR(:,u)<0)~=coded),evm,nmse,mean(primary.Variance(:,u))}; %#ok<AGROW>
+  end
+ end
+end
+T=cell2table(rows,'VariableNames',{'Precoder','BeamWidth','BS','Frame','UE','Estimator','PayloadBits', ...
+ 'Errors','CRCFailed','Goodput_Mbps','PreLDPC_BER','EVM_percent','ChannelNMSE','EffectiveVariance'});
+if ~isfolder('physics_diagnostic'),mkdir('physics_diagnostic');end
+writetable(T,fullfile('physics_diagnostic',"pilots_"+scheme+"_W"+width+".csv"));
+fprintf('PILOT_AUDIT_RESULT %s\n',jsonencode(table2struct(T)));
 end

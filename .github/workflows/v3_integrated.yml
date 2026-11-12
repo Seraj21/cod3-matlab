@@ -1,4 +1,4 @@
-name: Integrated V3 200 MHz phase-consistent receiver evaluation
+name: Integrated V3 200 MHz pilot and precoder validation
 on:
   push:
     branches: [mu-cnn-v2]
@@ -27,7 +27,7 @@ jobs:
           command: addpath('mu_mimo','v2_mimo');v4ReceiverSelfTest;
   diagnose:
     needs: smoke
-    if: ${{ !contains(github.event.head_commit.message, '[full-evaluation]') && !contains(github.event.head_commit.message, '[calibrate]') }}
+    if: ${{ !contains(github.event.head_commit.message, '[full-evaluation]') && !contains(github.event.head_commit.message, '[calibrate]') && !contains(github.event.head_commit.message, '[pilot-audit]') }}
     strategy:
       fail-fast: false
       matrix:
@@ -53,6 +53,37 @@ jobs:
         if: always()
         with:
           name: physics-diagnostic-${{ matrix.scenario }}
+          path: physics_diagnostic/
+          if-no-files-found: warn
+  pilot-audit:
+    needs: smoke
+    if: ${{ contains(github.event.head_commit.message, '[pilot-audit]') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        precoder: [ZF, PZF, MR]
+        width: [1, 4, 24]
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: calibration-${{ matrix.precoder }}
+          run-id: 43067534428
+          github-token: ${{ github.token }}
+          path: pilot_calibration
+      - uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2025b
+          products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
+      - uses: matlab-actions/run-command@v3
+        with:
+          command: v2_probe_physics("pilotBlock${{ matrix.width }}",32,264,2,"${{ matrix.precoder }}");
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: pilot-audit-${{ matrix.precoder }}-${{ matrix.width }}
           path: physics_diagnostic/
           if-no-files-found: warn
   calibrate:
