@@ -10,6 +10,32 @@ for noise=[.014 .2 1]
 end
 edge=v4SymbolLLR(symbols,repmat(.001,M,1),repmat(1e8,M,1),M);
 assert(all(isfinite(edge)));
+% Compare every RV against the toolbox's independent standard-QAM matcher.
+for setup=[512 1024 .5;12000 16000 .75].'
+ for qm=[4 8]
+  codec=ExperimentalLDPC(setup(1),setup(2),qm,setup(3));
+  stream=RandStream('mt19937ar','Seed',71000400+qm+setup(1));
+  data=int8(randi(stream,[0 1],codec.PayloadBits,1));
+  attached=nrCRCEncode(data,codec.Info.CRC);
+  mother=nrLDPCEncode(nrCodeBlockSegmentLDPC(attached,codec.Info.BGN),codec.Info.BGN);
+  modulation=sprintf('%dQAM',2^qm);combined=[];
+  for rv=[0 2 3 1]
+   coded=codec.encode(data,rv);
+   expected=nrRateMatchLDPC(mother,codec.CodedBits,rv,modulation,1);
+   assert(isequal(coded,expected),'HARQ rate matching differs from NR toolbox');
+   soft=5*(1-2*double(coded));
+   recovered=codec.recover(soft,rv);
+   expected=nrRateRecoverLDPC(soft,codec.PayloadBits,setup(3),rv,modulation,1);
+   assert(max(abs(recovered(~codec.FillerMask)-expected(~codec.FillerMask)))<1e-12);
+   previous=combined;
+   [decoded,failed,~,combined]=codec.decode(soft,50,'Layered belief propagation',rv,previous);
+   if isempty(previous),previous=zeros(size(combined));end
+   assert(isequal(combined,previous+recovered),'HARQ lost or duplicated prior LLRs');
+  end
+  assert(~failed && isequal(data,decoded));
+  assert(isequal(codec.encode(data),codec.encode(data,0)),'Legacy RV0 changed');
+ end
+end
 % Verify layered BP can decode the identical Qm=9 rate-matched stream.
 for numRB=[66 264]
  cfg=v3Config(32,numRB);r=v3Resources(cfg);
@@ -22,6 +48,16 @@ for numRB=[66 264]
   assert(~failed && isequal(payload,bits) && all(iterations>0,'all'));
  end
  assert(Qm==r.Codec.Qm);
+ if numRB==66
+  % Exercise the experimental Qm=9 permutation with all four RVs too.
+  combined=[];
+  for rv=[0 2 3 1]
+   coded=r.Codec.encode(payload,rv);
+   [bits,failed,~,combined]=r.Codec.decode(8*(1-2*double(coded)),50, ...
+       'Layered belief propagation',rv,combined);
+  end
+  assert(~failed && isequal(payload,bits),'Qm=9 incremental redundancy failed');
+ end
  % Exercise the actual interleaver, QAM mapper and soft demapper, not just LDPC.
  coded=r.Codec.encode(payload);
  symbols=qammod(coded(r.BitOrder),cfg.M,'InputType','bit','UnitAveragePower',true);

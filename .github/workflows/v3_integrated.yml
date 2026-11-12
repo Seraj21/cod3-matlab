@@ -1,4 +1,4 @@
-name: Integrated V3 200 MHz receiver audit
+name: Integrated V3 200 MHz HARQ recovery acceptance
 on:
   push:
     branches: [mu-cnn-v2]
@@ -27,7 +27,7 @@ jobs:
           command: addpath(pwd,'mu_mimo','v2_mimo');v4ReceiverSelfTest;checks=runtests({'v2_mimo/tests/testV2Core.m','v2_mimo/tests/testV3Receiver.m'});assertSuccess(checks);
   diagnose:
     needs: smoke
-    if: ${{ !contains(github.event.head_commit.message, '[full-evaluation]') && !contains(github.event.head_commit.message, '[calibrate]') && !contains(github.event.head_commit.message, '[pilot-audit]') && !contains(github.event.head_commit.message, '[receiver-audit]') }}
+    if: ${{ !contains(github.event.head_commit.message, '[full-evaluation]') && !contains(github.event.head_commit.message, '[calibrate]') && !contains(github.event.head_commit.message, '[pilot-audit]') && !contains(github.event.head_commit.message, '[receiver-audit]') && !contains(github.event.head_commit.message, '[harq-recovery]') }}
     strategy:
       fail-fast: false
       matrix:
@@ -115,6 +115,37 @@ jobs:
         with:
           name: receiver-audit-${{ matrix.precoder }}
           path: physics_diagnostic/
+          if-no-files-found: warn
+  harq-recovery:
+    needs: smoke
+    if: ${{ contains(github.event.head_commit.message, '[harq-recovery]') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        precoder: [ZF, PZF, MR]
+        antennas: [32, 64]
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: calibration-${{ matrix.precoder }}
+          run-id: 43193721852
+          github-token: ${{ github.token }}
+          path: receiver_audit
+      - uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2025b
+          products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
+      - uses: matlab-actions/run-command@v3
+        with:
+          command: v2_probe_physics("harqRecovery",${{ matrix.antennas }},264,2,"${{ matrix.precoder }}");
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: harq-recovery-${{ matrix.precoder }}-${{ matrix.antennas }}
+          path: harq_recovery/
           if-no-files-found: warn
   calibrate:
     needs: smoke

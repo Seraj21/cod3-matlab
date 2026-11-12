@@ -4,7 +4,9 @@ if nargin>0
  if nargin<3,numRB=264;end
  if nargin<4,frames=2;end
  if nargin<5,scheme="ZF";end
- if string(scenario)=="receiverAudit"
+ if string(scenario)=="harqRecovery"
+  harqRecovery(antennas,numRB,frames,string(scheme));
+ elseif string(scenario)=="receiverAudit"
   receiverDiagnostic(antennas,numRB,frames,string(scheme));
  elseif startsWith(string(scenario),"pilotBlock")
   pilotDiagnostic(str2double(extractAfter(string(scenario),"pilotBlock")),antennas,numRB,frames,string(scheme),"per-symbol");
@@ -374,4 +376,111 @@ for frame=1:frames
   end
  end
 end
+end
+
+function harqRecovery(antennas,numRB,frames,scheme)
+% Actual incremental redundancy, with CRC-only acceptance and counted airtime.
+% A cohort of four packets is kept on air until all users ACK or four rounds end.
+% Already-ACKed layers remain occupied to preserve the common comparison packet.
+addpath(pwd,'mu_mimo','v2_mimo');
+loaded=load(fullfile('receiver_audit','integrated_receiver',lower(scheme)+"_receiver.mat"),'receiver');
+receiver=loaded.receiver;cfg=v3Config(antennas,numRB,"mobile");r=v3Resources(cfg);
+for name=string(fieldnames(receiver.TrainingChannelConfig)).'
+ assert(isequal(receiver.TrainingChannelConfig.(name),cfg.(name)), ...
+  'HARQ receiver configuration mismatch: %s',name);
+end
+assert(receiver.Scheme==scheme && receiver.TrainingCodeRate==cfg.Rate);
+cfg.DecoderDual=false;rvSequence=[0 2 3 1];methods=["LS" "LMMSE" "CNN" "Perfect"];
+feedbackGap=r.FrameDuration; % Explicit one-slot ideal-ACK processing interval.
+records={};cohorts={};
+for frame=1:frames
+ baseSeed=100000000+frame;
+ [~,payload]=muPayload(cfg,r,muSeed(baseSeed,70));
+ buffers=cell(numel(methods),cfg.Users);ack=false(numel(methods),cfg.Users);
+ firstACK=zeros(size(ack));errors=repmat(r.PayloadBits,size(ack));
+ usedRounds=zeros(numel(methods),1);
+ for round=1:numel(rvSequence)
+  rv=rvSequence(round);
+  current=cfg;current.ChannelSeed=baseSeed;
+  current.ChannelInitialTime=(round-1)*(r.FrameDuration+feedbackGap);
+  % Independent receiver/RF noise, one time-evolving propagation realization.
+  scene=v2Sounding(current,r,baseSeed+10000*(round-1));
+  tx=v2CEBase(scene.ULSamples,scene.ULNoise,r.UplinkLayout,receiver.PriorsTX);
+  [weights,power]=v3Weights(tx.Wiener,tx.VarianceWiener,scheme,scene,r);
+  assert(power.MaximumPowerError<1e-6);
+  grid=r.ReferenceGrid;coded=zeros(r.CodedBits,cfg.Users,'int8');
+  for u=1:cfg.Users
+   coded(:,u)=r.Codec.encode(payload(:,u),rv);
+   layer=grid(:,:,u);
+   layer(r.DataIndices)=qammod(coded(r.BitOrder,u),cfg.M,'InputType','bit','UnitAveragePower',true);
+   grid(:,:,u)=layer;
+  end
+  packet=v2Waveform(scene,r,grid,weights,true);
+  input=v3Receive(packet,scene,r,40,false,false);oracle=input.Truth;input.Truth=[];
+  for k=1:numel(methods)
+   if all(ack(k,:)),continue;end % Stop this estimator using CRC only.
+   method=methods(k);local=input;
+   if method=="Perfect",local.Truth=oracle;end
+   [h,v,observed]=v3EstimateRX(local,receiver,r,method);local.Observed=observed;
+   % Capture symbols/variance only; the legacy RV0 hard decode is not selected.
+   [~,~,~,primary]=v2Decode(local,h,v,payload,cfg,r);
+   for u=find(~ack(k,:))
+    demapped=v4SymbolLLR(primary.Symbols(:,u),primary.Variance(:,u), ...
+        zeros(size(primary.Variance(:,u))),cfg.M);
+    llr=zeros(r.CodedBits,1);llr(r.BitOrder)=max(-50,min(50,demapped));
+    [decoded,failed,~,buffers{k,u}]=r.Codec.decode(llr,50, ...
+        'Layered belief propagation',rv,buffers{k,u});
+    errors(k,u)=nnz(decoded~=payload(:,u)); % Scoring only, never ACK control.
+    if ~failed,ack(k,u)=true;firstACK(k,u)=round;end
+   end
+   usedRounds(k)=round;
+  end
+  for k=1:numel(methods)
+   for u=1:cfg.Users
+    records{end+1}=struct('Precoder',char(scheme),'BS',antennas,'Frame',frame, ...
+     'ChannelSeed',baseSeed,'Estimator',char(methods(k)),'SNR_dB',40,'UE',u, ...
+     'RoundBudget',round,'UsedRounds',usedRounds(k),'RV',rv, ...
+     'PayloadBits',r.PayloadBits,'Errors',errors(k,u),'CRCFailed',~ack(k,u), ...
+     'FirstACKRound',firstACK(k,u),'CorrectBlock',ack(k,u) && errors(k,u)==0); %#ok<AGROW>
+   end
+   used=usedRounds(k);correct=nnz(ack(k,:) & errors(k,:)==0);
+   airtime=used*r.FrameDuration;elapsed=airtime+max(0,used-1)*feedbackGap;
+   cohorts{end+1}=struct('Precoder',char(scheme),'BS',antennas,'Frame',frame, ...
+    'Estimator',char(methods(k)),'RoundBudget',round,'UsedRounds',used, ...
+    'CorrectBlocks',correct,'Blocks',cfg.Users,'PayloadBits',r.PayloadBits*cfg.Users, ...
+    'Errors',sum(errors(k,:)),'DeliveredBits',correct*r.PayloadBits, ...
+    'Airtime_s',airtime,'Elapsed_s',elapsed,'FeedbackGap_s',feedbackGap, ...
+    'InitialCodeRate',cfg.Rate,'PayloadPerTransmittedBit',r.PayloadBits/(used*r.CodedBits)); %#ok<AGROW>
+  end
+  if ~isfolder('harq_recovery'),mkdir('harq_recovery');end
+  prefix=fullfile('harq_recovery',scheme+"_BS"+antennas);
+  writetable(struct2table(vertcat(records{:})),prefix+"_blocks.csv");
+  C=struct2table(vertcat(cohorts{:}));writetable(C,prefix+"_cohorts.csv");
+  for method=methods
+   t=C(string(C.Estimator)==method & C.RoundBudget==round,:);
+   result=struct('Precoder',scheme,'BS',antennas,'Estimator',method,'SNR_dB',40, ...
+    'Frames',frame,'RoundBudget',round,'BER',sum(t.Errors)/sum(t.PayloadBits), ...
+    'CorrectBlocks',sum(t.CorrectBlocks),'Blocks',sum(t.Blocks), ...
+    'BLER',1-sum(t.CorrectBlocks)/sum(t.Blocks), ...
+    'GoodputAirTime_Mbps',sum(t.DeliveredBits)/sum(t.Airtime_s)/1e6, ...
+    'GoodputElapsed_Mbps',sum(t.DeliveredBits)/sum(t.Elapsed_s)/1e6, ...
+    'MeanRounds',mean(t.UsedRounds));
+   fprintf('HARQ_RECOVERY_RESULT %s\n',jsonencode(result));
+  end
+ end
+end
+settings=struct('Config',cfg,'RVSequence',rvSequence,'SourceReceiverRun',43193721852, ...
+ 'FrameCount',frames,'FeedbackGap_s',feedbackGap,'SeedOffset',100000000, ...
+ 'Feedback','Ideal CRC ACK/NACK, one-slot gap; no feedback-channel errors modeled', ...
+ 'Scheduling','Four-packet cohort; keep ACKed layers occupied; stop each estimator on all CRC ACKs', ...
+ 'Channel','One seed per cohort; InitialTime advanced; independent RF/receiver noise per round');
+save(prefix+"_settings.mat",'settings');
+final=C(string(C.Estimator)=="CNN" & C.RoundBudget==numel(rvSequence),:);
+gate=struct('Precoder',scheme,'BS',antennas,'CorrectBlocks',sum(final.CorrectBlocks), ...
+ 'Blocks',sum(final.Blocks),'AllCNNBlocksDelivered',all(final.CorrectBlocks==final.Blocks), ...
+ 'GoodputElapsed_Mbps',sum(final.DeliveredBits)/sum(final.Elapsed_s)/1e6, ...
+ 'Scope','Small acceptance sample; passing does not establish a low outage probability');
+fprintf('HARQ_ACCEPTANCE_RESULT %s\n',jsonencode(gate));
+assert(gate.AllCNNBlocksDelivered, ...
+ 'HARQ executed, but the CNN reliability acceptance gate was not met. Inspect saved results.');
 end
