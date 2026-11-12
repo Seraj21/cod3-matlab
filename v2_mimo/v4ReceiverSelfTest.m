@@ -46,6 +46,14 @@ for numRB=[66 264]
   assert(all(errors==0 & ~failed),'Residual-phase receiver round-trip failed');
   assert(all(detail.MeanEffectiveVariance<1.01e-4), ...
    'Removed common phase must not inflate the LLR noise variance');
+  [capturedErrors,capturedFailed,capturedDetail,primary]=v2Decode(input,h,zeros(size(h)),payload,cfg,r);
+  assert(isequal(errors,capturedErrors) && isequal(failed,capturedFailed) && isequal(detail,capturedDetail), ...
+   'Capturing diagnostics changed receiver behavior');
+  assert(max(abs(primary.PTRSAmplitude-1),[],'all')<1e-10);
+  input.Observed=.82*observed;
+  [~,~,~,primary]=v2Decode(input,h,zeros(size(h)),payload,cfg,r);
+  assert(max(abs(primary.PTRSAmplitude-.82),[],'all')<1e-10, ...
+   'Known-reference amplitude diagnostic is incorrectly normalized');
  end
 end
 % The optional coherent precoder must preserve power, CDM pairs and time support.

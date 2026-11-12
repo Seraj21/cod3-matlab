@@ -28,6 +28,7 @@ if capture
  primary.Variance=zeros(numel(r.DataIndices),cfg.Users);
  primary.ChannelError=zeros(numel(r.DataIndices),cfg.Users);
  primary.LLR=zeros(r.CodedBits,cfg.Users);
+ primary.PTRSAmplitude=ones(r.L,cfg.Users);
 end
 for u=find(users)
  rows=(u-1)*cfg.UERx+(1:cfg.UERx);
@@ -53,6 +54,18 @@ for u=find(users)
  [~,times]=ind2sub([r.K r.L],indices);
  phasor=accumarray(times,equalized(indices).*conj(reference(indices)),[r.L 1]);
  valid=find(abs(phasor)>0);
+ if capture
+  % Diagnostic only: expose the gain measured from known isolated PTRS.
+  % Do not alter production symbols, channel estimates or LLR variance here.
+  energy=accumarray(times,abs(reference(indices)).^2,[r.L 1]);
+  amplitude=abs(phasor)./max(energy,eps);
+  if numel(valid)>1
+   primary.PTRSAmplitude(:,u)=interp1(valid,amplitude(valid), ...
+       min(valid(end),max(valid(1),(1:r.L).')),'linear');
+  elseif numel(valid)==1
+   primary.PTRSAmplitude(:,u)=amplitude(valid);
+  end
+ end
  if numel(valid)>1
   phase=interp1(valid,unwrap(angle(phasor(valid))),min(valid(end),max(valid(1),(1:r.L).')),'linear');
   equalized=equalized.*exp(-1i*phase.');

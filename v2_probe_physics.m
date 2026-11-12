@@ -4,7 +4,9 @@ if nargin>0
  if nargin<3,numRB=264;end
  if nargin<4,frames=2;end
  if nargin<5,scheme="ZF";end
- if startsWith(string(scenario),"pilotBlock")
+ if string(scenario)=="receiverAudit"
+  receiverDiagnostic(antennas,numRB,frames,string(scheme));
+ elseif startsWith(string(scenario),"pilotBlock")
   pilotDiagnostic(str2double(extractAfter(string(scenario),"pilotBlock")),antennas,numRB,frames,string(scheme),"per-symbol");
  elseif startsWith(string(scenario),"pilotSlot")
   pilotDiagnostic(str2double(extractAfter(string(scenario),"pilotSlot")),antennas,numRB,frames,string(scheme),"slot");
@@ -263,4 +265,111 @@ T=cell2table(rows,'VariableNames',{'Precoder','BeamWidth','BS','Frame','UE','Est
 if ~isfolder('physics_diagnostic'),mkdir('physics_diagnostic');end
 writetable(T,fullfile('physics_diagnostic',"pilots_"+scheme+"_W"+width+"_"+timeMode+".csv"));
 fprintf('PILOT_AUDIT_RESULT %s\n',jsonencode(table2struct(T)));
+end
+
+function receiverDiagnostic(antennas,numRB,frames,scheme)
+% Frozen-receiver ablation. Oracle controls below are NOT deployable receivers.
+% No fitting/training is performed on these diagnostic channels.
+addpath(pwd,'mu_mimo','v2_mimo');
+modelFile=fullfile('receiver_audit','integrated_receiver',lower(scheme)+"_receiver.mat");
+loaded=load(modelFile,'receiver');receiver=loaded.receiver;
+cfg=v3Config(antennas,numRB,"mobile");r=v3Resources(cfg);
+assert(receiver.Scheme==scheme && receiver.TrainingCodeRate==cfg.Rate && receiver.ProjectionLoss);
+for name=string(fieldnames(receiver.TrainingChannelConfig)).'
+ assert(isequal(receiver.TrainingChannelConfig.(name),cfg.(name)), ...
+  'Frozen receiver channel configuration mismatch: %s',name);
+end
+% Keep the same first-pass four-branch combiner for every ablation.
+cfg.DecoderDual=false;
+controls=["Baseline" "PTRSAmplitude" "OracleSymbolGain" "OracleVariance" "OracleGainVariance"];
+rows=struct([]);symbolRows=struct([]);
+for frame=1:frames
+ scene=v2Sounding(cfg,r,99600000+frame);
+ tx=v2CEBase(scene.ULSamples,scene.ULNoise,r.UplinkLayout,receiver.PriorsTX);
+ [weights,power]=v3Weights(tx.Wiener,tx.VarianceWiener,scheme,scene,r);
+ assert(power.MaximumPowerError<1e-6);
+ [grid,payload]=muPayload(cfg,r,muSeed(scene.Seed,70));
+ packet=v2Waveform(scene,r,grid,weights,true);
+ input=v3Receive(packet,scene,r,40,false,false);
+ oracleChannel=input.Truth;input.Truth=[];
+ for method=["LMMSE" "CNN" "Perfect"]
+  local=input;
+  if method=="Perfect",local.Truth=oracleChannel;end
+  [h,v,observed]=v3EstimateRX(local,receiver,r,method);local.Observed=observed;
+  [~,~,~,primary]=v2Decode(local,h,v,payload,cfg,r);
+  for u=1:cfg.Users
+   reference=grid(:,:,u);reference=reference(r.DataIndices);
+   coded=r.Codec.encode(payload(:,u));original=primary.Symbols(:,u);
+   baseVariance=primary.Variance(:,u);gain=ones(r.L,1);
+   for l=unique(r.DataTimes).'
+    mask=r.DataTimes==l;
+    gain(l)=sum(original(mask).*conj(reference(mask)))/sum(abs(reference(mask)).^2);
+    residual=original(mask)-reference(mask);
+    symbolRows(end+1)=struct('Precoder',char(scheme),'BS',antennas,'Frame',frame, ...
+     'ChannelSeed',scene.Seed,'Estimator',char(method),'UE',u,'Symbol',l, ...
+     'PTRSAmplitude',primary.PTRSAmplitude(l,u),'OracleGainAmplitude',abs(gain(l)), ...
+     'OracleGainPhase_deg',angle(gain(l))*180/pi,'MeasuredMSE',mean(abs(residual).^2), ...
+     'EstimatedVariance',mean(baseVariance(mask)), ...
+     'ScalarGainErrorFraction',sum(abs((gain(l)-1)*reference(mask)).^2)/max(sum(abs(residual).^2),eps)); %#ok<AGROW>
+   end
+   for control=controls
+    z=original;effectiveVariance=baseVariance;divisor=ones(size(z));
+    if control=="PTRSAmplitude"
+     divisor=primary.PTRSAmplitude(r.DataTimes,u);
+    elseif any(control==["OracleSymbolGain" "OracleGainVariance"])
+     divisor=gain(r.DataTimes);
+    end
+    invalid=~isfinite(divisor) | abs(divisor)<1e-3;
+    divisor(invalid)=1;
+    z=z./divisor;effectiveVariance=effectiveVariance./abs(divisor).^2;
+    if any(control==["OracleVariance" "OracleGainVariance"])
+     % Truth-assisted diagnostic scale only; preserve relative per-tone weights.
+     for l=unique(r.DataTimes).'
+      mask=r.DataTimes==l;
+      scale=mean(abs(z(mask)-reference(mask)).^2)/max(mean(effectiveVariance(mask)),1e-7);
+      effectiveVariance(mask)=effectiveVariance(mask)*scale;
+     end
+    end
+    effectiveVariance=max(effectiveVariance,1e-7);
+    assert(all(isfinite(z)) && all(isfinite(effectiveVariance)));
+    demapped=v4SymbolLLR(z,effectiveVariance,zeros(size(z)),cfg.M);
+    restored=zeros(r.CodedBits,1);restored(r.BitOrder)=max(-50,min(50,demapped));
+    % All controls use the identical exact-APP demapper and 50-iteration decoder.
+    [decoded,failed]=r.Codec.decode(restored,50,'Layered belief propagation');
+    errors=nnz(decoded~=payload(:,u));correct=~failed && errors==0;
+    mse=mean(abs(z-reference).^2);oracleControl=startsWith(control,"Oracle");
+    rows(end+1)=struct('Precoder',char(scheme),'BS',antennas,'NumRB',numRB, ...
+     'Frame',frame,'ChannelSeed',scene.Seed,'SNR_dB',40,'Estimator',char(method),'UE',u, ...
+     'Control',char(control),'UsesPayloadTruth',oracleControl, ...
+     'UsesTrueChannel',method=="Perfect",'PayloadBits',r.PayloadBits,'Errors',errors, ...
+     'CRCFailed',logical(failed),'CorrectBlock',correct, ...
+     'Goodput_Mbps',double(correct)*r.PayloadBits/r.FrameDuration/1e6, ...
+     'PreLDPC_BER',mean((restored<0)~=coded), ...
+     'EVM_percent',100*sqrt(mse/mean(abs(reference).^2)), ...
+     'MeasuredMSE',mse,'EstimatedVariance',mean(effectiveVariance), ...
+     'MSEToVarianceRatio',mse/mean(effectiveVariance),'GainFallbackSymbols',nnz(invalid)); %#ok<AGROW>
+   end
+  end
+ end
+ if ~isfolder('physics_diagnostic'),mkdir('physics_diagnostic');end
+ T=struct2table(rows);S=struct2table(symbolRows);
+ prefix=fullfile('physics_diagnostic',"receiver_"+scheme+"_BS"+antennas);
+ writetable(T,prefix+".csv");writetable(S,prefix+"_symbols.csv");
+ settings=struct('Config',cfg,'SourceRun',43193721852,'ModelFile',modelFile, ...
+  'Decoder','APP50, four-branch first pass only','SeedOffset',99600000, ...
+  'CompletedFrames',frame,'FrameDuration',r.FrameDuration, ...
+  'Warning','Oracle controls use payload/channel truth and are diagnostics only.');
+ save(prefix+"_settings.mat",'settings');
+ for method=["LMMSE" "CNN" "Perfect"]
+  for control=controls
+   t=T(string(T.Estimator)==method & string(T.Control)==control,:);
+   summary=struct('Precoder',scheme,'BS',antennas,'Estimator',method,'Control',control, ...
+    'DiagnosticOnly',true,'Frames',frame,'SNR_dB',40,'BER',sum(t.Errors)/sum(t.PayloadBits), ...
+    'CorrectBlocks',nnz(t.CorrectBlock),'Blocks',height(t), ...
+    'Goodput_Mbps',sum(t.Goodput_Mbps)/frame,'EVM_percent',mean(t.EVM_percent), ...
+    'MSEToVarianceRatio',mean(t.MSEToVarianceRatio));
+   fprintf('RECEIVER_AUDIT_RESULT %s\n',jsonencode(summary));
+  end
+ end
+end
 end
