@@ -26,9 +26,15 @@ if r.OrthogonalDMRS
  r.ReferenceGrid=r.DMRS+r.PTRS;
 end
 r.DMRSLegacyLayouts=r.DownlinkLayout;
+r.MatchedPilotMask=isfield(cfg,'MatchedPilotMask') && cfg.MatchedPilotMask;
 for user=1:cfg.Users
  old=r.DownlinkLayout{user};p=old;
  p.Mask=old.Mask | abs(r.PTRS(1:cfg.PRGWidth,:,user))>0;
+ if r.MatchedPilotMask
+  ref=r.ReferenceGrid(:,:,user);
+  p.Mask=ref(1:p.W,:)~=0;
+  assert(isequal(repmat(p.Mask,r.G,1),ref~=0));
+ end
  p.Observed=find(p.Mask);p.Count=numel(p.Observed);p.Label=old.Label+"_P"+user;
  [f,t]=ind2sub([p.W p.L],p.Observed);coordinates=[double(f)/4 double(t)/3];
  tri=delaunayTriangulation(coordinates);

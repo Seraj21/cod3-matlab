@@ -4,7 +4,9 @@ if nargin>0
  if nargin<3,numRB=264;end
  if nargin<4,frames=2;end
  if nargin<5,scheme="ZF";end
- if ismember(string(scenario),["trackedFirstPass" "staggeredFirstPass" "soundingFirstPass" "soundingHoldout"])
+ if string(scenario)=="matchedHoldout"
+  matchedHoldout(antennas,numRB,frames,string(scheme));
+ elseif ismember(string(scenario),["trackedFirstPass" "staggeredFirstPass" "soundingFirstPass" "soundingHoldout"])
   trackedFirstPass(antennas,numRB,frames,string(scheme),string(scenario));
  elseif string(scenario)=="firstPassJoint"
   firstPassJoint(antennas,numRB,frames,string(scheme));
@@ -566,6 +568,66 @@ gate=struct('Precoder',scheme,'BS',antennas,'ExpectedBlocks',frames*cfg.Users, .
  'Requirement','All CNN blocks delivered on first transmission; no extra pilots, lower code rate or HARQ');
 fprintf('FIRST_PASS_ACCEPTANCE_RESULT %s\n',jsonencode(gate));
 assert(gate.Passed,'First-pass reliability acceptance was not met. Keep baseline and failure records.');
+end
+
+function matchedHoldout(antennas,numRB,frames,scheme)
+addpath(pwd,'mu_mimo','v2_mimo');
+cfg=v3Config(antennas,numRB,"mobile",true);
+cfg.RetryEP=true;cfg.DecoderIterations=50;cfg.DecoderAlgorithm='Layered belief propagation';
+r=v3Resources(cfg);folder='matched_measurements';if ~isfolder(folder),mkdir(folder);end
+loaded=load(fullfile('matched_receiver',lower(scheme)+"_receiver.mat"),'receiver');
+receiver=loaded.receiver;
+assert(receiver.Scheme==scheme && receiver.MatchedPilotMask && receiver.TrainingBandwidthRB==numRB);
+assert(receiver.TrainingCodeRate==cfg.Rate && cfg.M==512 && r.PayloadBits==71280);
+assert(isequal(receiver.PilotMasks,cellfun(@(p)p.Mask,r.DownlinkLayout,'UniformOutput',false)));
+for name=string(fieldnames(receiver.TrainingChannelConfig)).'
+ assert(isequal(receiver.TrainingChannelConfig.(name),cfg.(name)),'Training mismatch: %s',name);
+end
+points=[20 30 40];methods=["CNN" "Perfect" "LMMSE" "LS"];
+rows={};gate=false;
+for n=1:frames
+ seed=130000000+n;
+ scene=v2Sounding(cfg,r,seed);[grid,bits]=muPayload(cfg,r,muSeed(seed,70));
+ tx=v2CEBase(scene.ULSamples,scene.ULNoise,r.UplinkLayout,receiver.PriorsTX);
+ [w,report]=v3Weights(tx.Wiener,tx.VarianceWiener,scheme,scene,r);
+ assert(report.MaximumPowerError<1e-6);
+ packet=v2Waveform(scene,r,grid,w,true);
+ coded=zeros(r.CodedBits,cfg.Users,'int8');
+ for u=1:cfg.Users,coded(:,u)=r.Codec.encode(bits(:,u));end
+ for snr=points
+  input=v3Receive(packet,scene,r,snr,false,false);
+  [truth,~,~]=v2EstimateRX(input,receiver,r,"Perfect");input.Truth=[];
+  for method=methods
+   local=input;
+   if method=="Perfect"
+    h=truth;v=zeros(size(h));local.Observed=v2BeamObserved(input.Observed,r);
+   else
+    [h,v,local.Observed]=v3EstimateRX(input,receiver,r,method);
+   end
+   [errors,failed,~,primary]=v2Decode(local,h,v,bits,cfg,r);
+   for u=1:cfg.Users
+    branch=(u-1)*cfg.UERx+(1:cfg.UERx);data=r.DataIndices;
+    reference=reshape(truth(:,:,branch,:),r.K*r.L,[]);
+    estimate=reshape(h(:,:,branch,:),r.K*r.L,[]);
+    mse=sum(abs(estimate(data,:)-reference(data,:)).^2,'all');
+    energy=sum(abs(reference(data,:)).^2,'all');
+    rows(end+1,:)={char(scheme),antennas,seed,snr,char(method),u,r.PayloadBits, ...
+     errors(u),logical(failed(u)),errors(u)==0 && ~failed(u),mse/max(energy,eps), ...
+     mean((primary.LLR(:,u)<0)~=coded(:,u))}; %#ok<AGROW>
+   end
+   T=cell2table(rows,'VariableNames',{'Precoder','BS','Seed','SNR_dB','Estimator', ...
+    'UE','Bits','Errors','CRCFailed','Delivered','DataNMSE','LinearPreFEC_BER'});
+   writetable(T,fullfile(folder,scheme+"_BS"+antennas+".csv"));
+   t=T(T.SNR_dB==snr & string(T.Estimator)==method,:);
+   ber=sum(t.Errors)/sum(t.Bits);mbps=sum(t.Bits.*t.Delivered)/(n*r.FrameDuration*1e6);
+   fprintf('MATCHED_RESULT %s\n',jsonencode(struct('BS',antennas,'Precoder',scheme, ...
+    'SNR_dB',snr,'Estimator',method,'Frames',n,'BER',ber,'Goodput_Mbps',mbps, ...
+    'CorrectBlocks',nnz(t.Delivered),'Blocks',height(t),'Bits',sum(t.Bits))));
+   if method=="CNN" && snr==40,gate=ber<1e-5 && mbps>=1140;end
+  end
+ end
+end
+fprintf('MATCHED_GATE %s\n',jsonencode(struct('BS',antennas,'Precoder',scheme,'Passed',gate)));
 end
 
 function trackedFirstPass(antennas,numRB,frames,scheme,scenario)

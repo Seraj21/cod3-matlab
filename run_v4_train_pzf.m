@@ -1,22 +1,25 @@
-function run_v4_train_pzf(folder,useProjection,modelFile,trainFrames,validationFrames,epochs,scheme)
-% Match each receiver to its 66-RB deployment waveform and BS CSI.
+function run_v4_train_pzf(folder,useProjection,modelFile,trainFrames,validationFrames,epochs,scheme,matchedPilots)
+% Fit the receiver on the requested deployment waveform and pilot coordinates.
 if nargin<3,modelFile='v3_refined/v3_model.mat';end
 if nargin<4,trainFrames=128;end
 if nargin<5,validationFrames=32;end
 if nargin<6,epochs=10;end
 if nargin<7,scheme="PZF";end
+if nargin<8,matchedPilots=false;end
 scheme=string(scheme);
+numRB=66;if matchedPilots,numRB=264;end
 assert(isscalar(scheme) && ismember(scheme,["MR" "ZF" "PZF"]));
 addpath(pwd,'mu_mimo','v2_mimo');
 loaded=load(modelFile,'model');model=loaded.model;
 assert(model.Version==6 && model.Selection.(scheme)(1)==0);
 if ~isfolder(folder),mkdir(folder);end
-cfg=v3Config(32,66,"mobile");r=v3Resources(cfg);
+cfg=v3Config(32,numRB,"mobile",matchedPilots);r=v3Resources(cfg);
 % Refit the deployed transmitter's predictor before collecting receiver data.
 % These channel seeds are disjoint from receiver training, validation and test.
 txStats=v2Prior("init",r.UplinkLayout,0);
-for frame=1:64
- txCfg=v3Config(32+32*mod(frame-1,2),66,"mobile");
+txFrames=64;if matchedPilots,txFrames=24;end
+for frame=1:txFrames
+ txCfg=v3Config(32+32*mod(frame-1,2),numRB,"mobile",matchedPilots);
  scene=v2Sounding(txCfg,r,97000000+frame);
  txStats=v2Prior("accumulate",txStats,scene.ULCleanSamples,scene.ULTruth,r.UplinkLayout);
 end
@@ -71,10 +74,14 @@ receiver.PriorsRX=priors;receiver.NetworkRX=net;receiver.BlendRX=blend;receiver.
 receiver.Signature.TargetCodeRate=cfg.Rate;
 receiver.TrainingChannels=trainFrames;receiver.ValidationChannels=validationFrames;
 receiver.TrainingPatches=24*trainFrames;receiver.ProjectionLoss=useProjection;
-receiver.TrainingBandwidthRB=66;receiver.TrainingCodeRate=cfg.Rate;
-receiver.TrainingSNR_dB=[0 40];
+receiver.TrainingBandwidthRB=numRB;receiver.TrainingCodeRate=cfg.Rate;
+receiver.TrainingSNR_dB=[min(conditions.SNR1_dB) max(conditions.SNR2_dB)];
+if matchedPilots
+ receiver.PilotMasks=cellfun(@(p)p.Mask,r.DownlinkLayout,'UniformOutput',false);
+ receiver.MatchedPilotMask=true;
+end
 receiver.PriorsTX=model.PriorsTX;
-receiver.TransmitterPriorChannels=64;receiver.TransmitterPriorSeedBase=97000000;
+receiver.TransmitterPriorChannels=txFrames;receiver.TransmitterPriorSeedBase=97000000;
 % Prevent silently deploying a receiver trained for another channel/RF profile.
 receiver.TrainingChannelConfig=struct;
 for name=["OperatingProfile" "DelaySpread" "Speed" "SoundingSNR" "CarrierFrequency" "SubcarrierSpacing" ...
@@ -92,7 +99,7 @@ function [records,stats,conditions]=collect(model,r,count,seedBase,stats,trainin
 records=cell(8*count,1);at=0;conditions=zeros(count,5);
 for frame=1:count
  is64=mod(frame-1,2);bs=32+32*is64;
- cfg=v3Config(bs,66,"mobile");seed=seedBase+frame;
+ cfg=v3Config(bs,r.K/12,"mobile",r.MatchedPilotMask);seed=seedBase+frame;
  scene=v2Sounding(cfg,r,seed);
  tx=v2CEBase(scene.ULSamples,scene.ULNoise,r.UplinkLayout,model.PriorsTX);
  weights=v3Weights(tx.Wiener,tx.VarianceWiener,scheme,scene,r);
@@ -100,6 +107,9 @@ for frame=1:count
  packet=v2Waveform(scene,r,grid,weights,true);
  n=ceil(frame/2)-1;
  points=[.5*mod(8*n+4*is64,21) 11+mod(7*n+3*is64,30)];
+ if r.MatchedPilotMask
+  points=[15+5*mod(n+is64,4),35+5*mod(n+is64,2)];
+ end
  conditions(frame,:)=[training seed bs points];
  for snr=points
   input=v3Receive(packet,scene,r,snr,false,training);
