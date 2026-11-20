@@ -122,7 +122,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        precoder: [ZF]
+        precoder: [ZF, PZF, MR]
         antennas: [32, 64]
     runs-on: ubuntu-latest
     timeout-minutes: 35
@@ -140,7 +140,7 @@ jobs:
           products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
       - uses: matlab-actions/run-command@v3
         with:
-          command: v2_probe_physics("soundingFirstPass",${{ matrix.antennas }},264,4,"${{ matrix.precoder }}");
+          command: v2_probe_physics("staggeredFirstPass",${{ matrix.antennas }},264,4,"${{ matrix.precoder }}");
       - uses: actions/upload-artifact@v7
         if: always()
         with:
