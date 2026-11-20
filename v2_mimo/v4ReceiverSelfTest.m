@@ -151,5 +151,19 @@ for user=1:4
  assert(max(abs(actual(mask)-expected(mask)))<1e-11, ...
   'Orthogonal pilots failed to separate frequency-varying user channels');
 end
+% Decoder feedback crosses both the NR and slot interleavers in RV0 order.
+cfg=v3Config(32,12);cfg.PreserveBitLevels=true;r=muResources(cfg);
+assert(isequal(sort(r.BitOrder),(1:r.CodedBits).'));
+assert(all(diff(reshape(r.BitOrder,cfg.Qm,[]),1,1)==1,'all'));
+[~,payload]=muPayload(cfg,r,71000711);coded=r.Codec.encode(payload(:,1));
+strong=8*double(1-2*coded);ext=r.Codec.codedExtrinsic(strong,12);
+assert(all(isfinite(ext)) && mean((strong+ext<0)~=coded)==0);
+z=qammod(coded(r.BitOrder),cfg.M,'InputType','bit','UnitAveragePower',true);
+z=z(1:40);noise=.04*ones(size(z));neutral=zeros(cfg.Qm,numel(z));
+llr=v4SymbolLLR(z,noise,zeros(size(z)),cfg.M);
+assert(max(abs(v4SymbolLLR(z,noise,zeros(size(z)),cfg.M,neutral)-llr))<1e-9);
+% Extrinsic output for bit 1 must exclude its own prior.
+neutral(1,:)=3;llr2=v4SymbolLLR(z,noise,zeros(size(z)),cfg.M,neutral);
+assert(max(abs(llr(1:cfg.Qm:end)-llr2(1:cfg.Qm:end)))<1e-9);
 fprintf('V4_RECEIVER_SELF_TEST_PASS: rate 3/4, 66/264 RB, QAM and AWGN round trips\n');
 end

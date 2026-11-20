@@ -108,6 +108,21 @@ for u=find(users)
  if isfield(cfg,'DecoderIterations'),iterations=cfg.DecoderIterations;end
  if isfield(cfg,'DecoderAlgorithm'),algorithm=cfg.DecoderAlgorithm;end
  [decoded(:,u),failed(u)]=r.Codec.decode(restored,iterations,algorithm);
+ if isfield(cfg,'IterativeDemap') && cfg.IterativeDemap && failed(u) && ~joint && ~fixedBeam
+  % Feed back only receiver LDPC constraints. A new demapper pass consumes no
+  % radio resources. The stored first-pass LLR stays available for diagnostics.
+  channelLLR=restored;
+  for round=1:3
+   extrinsic=r.Codec.codedExtrinsic(channelLLR,12);
+   prior=.7*reshape(extrinsic(r.BitOrder),cfg.Qm,[]);
+   mapped=v4SymbolLLR(equalized(r.DataIndices),effectiveVariance,zeros(size(effectiveVariance)),cfg.M,prior);
+   channelLLR(r.BitOrder)=max(-50,min(50,mapped));
+   [proposal,bad]=r.Codec.decode(channelLLR,iterations,algorithm);
+   if ~bad
+    decoded(:,u)=proposal;failed(u)=false;break
+   end
+  end
+ end
  if capture
   % Project the desired-channel error through the same receive combiner.
   squaredWeights=abs(w).^2;

@@ -78,7 +78,14 @@ r.CodedBits = numel(r.DataIndices)*cfg.Qm;
 r.PayloadBits = 8*floor(cfg.Rate*r.CodedBits/8);
 r.Codec = ExperimentalLDPC(r.PayloadBits,r.CodedBits,cfg.Qm,cfg.Rate);
 stream = RandStream('mt19937ar','Seed',1729);
-r.BitOrder = randperm(stream,r.CodedBits).';
+if isfield(cfg,'PreserveBitLevels') && cfg.PreserveBitLevels
+    % The codec has already interleaved the LDPC bits across QAM bit levels.
+    % Spread complete labels across the slot without erasing that mapping.
+    labels=reshape(1:r.CodedBits,cfg.Qm,[]);
+    r.BitOrder=reshape(labels(:,randperm(stream,size(labels,2))),[],1);
+else
+    r.BitOrder = randperm(stream,r.CodedBits).';
+end
 r.PDSCH = pdsch;
 assert(~any(r.DataMask(any(abs(r.DMRS)>0,3))));
 assert(~any(r.DataMask(any(abs(r.PTRS)>0,3))));

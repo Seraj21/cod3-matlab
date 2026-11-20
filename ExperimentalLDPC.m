@@ -94,6 +94,29 @@ classdef ExperimentalLDPC
             [payload,transportError] = nrCRCDecode(attached,obj.Info.CRC);
             crcFailed = any(blockErrors(:)) || any(transportError(:));
         end
+        function extrinsic = codedExtrinsic(obj,inputLLR,iterations)
+            % Return code constraints in RV0 rate-matched order, excluding the
+            % local observation passed to the decoder for each transmitted bit.
+            recovered=obj.recover(inputLLR,0);
+            recovered(obj.FillerMask)=Inf;
+            posterior=nrLDPCDecode(recovered,obj.Info.BGN,iterations, ...
+                'Algorithm','Layered belief propagation','OutputFormat','whole','DecisionType','soft');
+            N=size(recovered,1);
+            columns=66;if obj.Info.BGN==2,columns=50;end
+            Z=N/columns;
+            if size(posterior,1)==N+2*Z,posterior=posterior(2*Z+1:end,:);end
+            assert(isequal(size(posterior),size(recovered)));
+            extrinsic=zeros(obj.CodedBits,1);
+            first=1;
+            for block=1:numel(obj.Selection)
+                picked=posterior(obj.Selection{block},block);
+                idx=first:first+obj.BlockLengths(block)-1;
+                extrinsic(idx)=picked(obj.Permutation{block})-inputLLR(idx);
+                first=first+numel(idx);
+            end
+            assert(~any(isnan(extrinsic)));
+            extrinsic=max(-10,min(10,extrinsic));
+        end
         function selection = selectionForRV(obj,rv)
             assert(isscalar(rv) && ismember(rv,0:3),'RV must be 0, 1, 2 or 3');
             if rv==0, selection=obj.Selection; return; end

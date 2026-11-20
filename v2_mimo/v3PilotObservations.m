@@ -13,7 +13,7 @@ for user=1:4
  temp=reshape(samples(:,:,:,user),r.K*r.L,branches);
  temp(indices,:)=flat(indices,:)./reference(indices);
  samples(:,:,:,user)=reshape(temp,r.K,r.L,branches);
- if isfield(r,'StaggeredDMRS') && r.StaggeredDMRS && ~r.MatchedPilotMask
+ if isfield(r,'StaggeredDMRS') && r.StaggeredDMRS && ~(isfield(r,'MatchedPilotMask') && r.MatchedPilotMask)
   % Frozen CNN features expect a fixed comb. Regrid observed coefficients
   % within each beam group for these features; the posterior uses raw pilots.
   layout=r.DMRSLegacyLayouts{user};W=layout.W;

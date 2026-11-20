@@ -4,8 +4,19 @@ if nargin>0
  if nargin<3,numRB=264;end
  if nargin<4,frames=2;end
  if nargin<5,scheme="ZF";end
- if ismember(string(scenario),["matchedHoldout" "matchedConfirm"])
-  matchedHoldout(antennas,numRB,frames,string(scheme),string(scenario));
+ if ismember(string(scenario),["matchedHoldout" "matchedConfirm" "codingAudit"])
+  if string(scenario)=="codingAudit"
+   candidates=["TurboDemap" "LabelShuffle" "LabelShuffleTurbo"];
+   for mode=candidates
+    passed=matchedHoldout(antennas,numRB,frames,string(scheme),"codingAudit",mode);
+    if passed
+     matchedHoldout(antennas,numRB,24,string(scheme),"codingConfirm",mode);
+     return
+    end
+   end
+  else
+   matchedHoldout(antennas,numRB,frames,string(scheme),string(scenario),"Baseline");
+  end
  elseif ismember(string(scenario),["trackedFirstPass" "staggeredFirstPass" "soundingFirstPass" "soundingHoldout"])
   trackedFirstPass(antennas,numRB,frames,string(scheme),string(scenario));
  elseif string(scenario)=="firstPassJoint"
@@ -570,10 +581,12 @@ fprintf('FIRST_PASS_ACCEPTANCE_RESULT %s\n',jsonencode(gate));
 assert(gate.Passed,'First-pass reliability acceptance was not met. Keep baseline and failure records.');
 end
 
-function matchedHoldout(antennas,numRB,frames,scheme,scenario)
+function gate=matchedHoldout(antennas,numRB,frames,scheme,scenario,mode)
 addpath(pwd,'mu_mimo','v2_mimo');
 cfg=v3Config(antennas,numRB,"mobile",true);
 cfg.RetryEP=true;cfg.DecoderIterations=50;cfg.DecoderAlgorithm='Layered belief propagation';
+cfg.PreserveBitLevels=startsWith(mode,"LabelShuffle");
+cfg.IterativeDemap=contains(mode,"Turbo");
 r=v3Resources(cfg);folder='matched_measurements';if ~isfolder(folder),mkdir(folder);end
 loaded=load(fullfile('matched_receiver',lower(scheme)+"_receiver.mat"),'receiver');
 receiver=loaded.receiver;
@@ -585,7 +598,10 @@ for name=string(fieldnames(receiver.TrainingChannelConfig)).'
 end
 points=[20 30 40];methods=["CNN" "Perfect" "LMMSE" "LS"];
 base=130000000;
-if scenario=="matchedConfirm"
+if startsWith(scenario,"coding")
+ base=130000000;points=40;methods="CNN";
+end
+if endsWith(scenario,"Confirm")
  base=150000000;points=40;methods="CNN";
  assert(receiver.BlendRX>0,'The validation split selected a zero CNN correction.');
 end
@@ -622,18 +638,19 @@ for n=1:frames
    end
    T=cell2table(rows,'VariableNames',{'Precoder','BS','Seed','SNR_dB','Estimator', ...
     'UE','Bits','Errors','CRCFailed','Delivered','DataNMSE','LinearPreFEC_BER'});
-   writetable(T,fullfile(folder,scheme+"_BS"+antennas+"_"+scenario+".csv"));
+   suffix="";if mode~="Baseline",suffix="_"+mode;end
+   writetable(T,fullfile(folder,scheme+"_BS"+antennas+"_"+scenario+suffix+".csv"));
    t=T(T.SNR_dB==snr & string(T.Estimator)==method,:);
    ber=sum(t.Errors)/sum(t.Bits);mbps=sum(t.Bits.*t.Delivered)/(n*r.FrameDuration*1e6);
    fprintf('MATCHED_RESULT %s\n',jsonencode(struct('BS',antennas,'Precoder',scheme, ...
-    'SNR_dB',snr,'Estimator',method,'BlendRX',receiver.BlendRX,'Frames',n,'BER',ber,'Goodput_Mbps',mbps, ...
+    'SNR_dB',snr,'Estimator',method,'ReceiverMode',mode,'BlendRX',receiver.BlendRX,'Frames',n,'BER',ber,'Goodput_Mbps',mbps, ...
     'CorrectBlocks',nnz(t.Delivered),'Blocks',height(t),'Bits',sum(t.Bits))));
    if method=="CNN" && snr==40,gate=ber<1e-5 && mbps>=1140;end
   end
  end
 end
-fprintf('MATCHED_GATE %s\n',jsonencode(struct('BS',antennas,'Precoder',scheme,'Passed',gate)));
-if scenario=="matchedConfirm",assert(gate,'Fresh channels missed the joint target');end
+fprintf('MATCHED_GATE %s\n',jsonencode(struct('BS',antennas,'Precoder',scheme,'ReceiverMode',mode,'Passed',gate)));
+if endsWith(scenario,"Confirm"),assert(gate,'Fresh channels missed the joint target');end
 end
 
 function trackedFirstPass(antennas,numRB,frames,scheme,scenario)

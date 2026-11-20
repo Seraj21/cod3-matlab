@@ -86,9 +86,38 @@ jobs:
         with:
           name: matched-measurement-ZF-${{ matrix.bs }}
           path: matched_measurements/
+  coding-audit:
+    needs: smoke
+    if: ${{ contains(github.event.head_commit.message, '[coding-pilots]') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        bs: [32, 64]
+    runs-on: ubuntu-latest
+    timeout-minutes: 110
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: matched-receiver-ZF
+          run-id: 44659971218
+          github-token: ${{ github.token }}
+          path: matched_receiver
+      - uses: matlab-actions/setup-matlab@v3
+        with:
+          release: R2025b
+          products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
+      - uses: matlab-actions/run-command@v3
+        with:
+          command: v2_probe_physics("codingAudit",${{ matrix.bs }},264,4,"ZF");
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: coding-measurement-ZF-${{ matrix.bs }}
+          path: matched_measurements/
   diagnose:
     needs: smoke
-    if: ${{ !contains(github.event.head_commit.message, '[full-evaluation]') && !contains(github.event.head_commit.message, '[calibrate]') && !contains(github.event.head_commit.message, '[pilot-audit]') && !contains(github.event.head_commit.message, '[receiver-audit]') && !contains(github.event.head_commit.message, '[harq-recovery]') && !contains(github.event.head_commit.message, '[first-pass-joint]') && !contains(github.event.head_commit.message, '[tracked-first-pass]') && !contains(github.event.head_commit.message, '[matched-pilots]') && !contains(github.event.head_commit.message, '[scaled-pilots]') }}
+    if: ${{ !contains(github.event.head_commit.message, '[full-evaluation]') && !contains(github.event.head_commit.message, '[calibrate]') && !contains(github.event.head_commit.message, '[pilot-audit]') && !contains(github.event.head_commit.message, '[receiver-audit]') && !contains(github.event.head_commit.message, '[harq-recovery]') && !contains(github.event.head_commit.message, '[first-pass-joint]') && !contains(github.event.head_commit.message, '[tracked-first-pass]') && !contains(github.event.head_commit.message, '[matched-pilots]') && !contains(github.event.head_commit.message, '[scaled-pilots]') && !contains(github.event.head_commit.message, '[coding-pilots]') }}
     strategy:
       fail-fast: false
       matrix:
