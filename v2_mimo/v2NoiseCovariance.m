@@ -4,7 +4,7 @@ function R=v2NoiseCovariance(observed,h,variance,noise,r)
 [K,L,branches,users]=size(h);
 prediction=sum(h.*reshape(r.ReferenceGrid,K,L,1,users),4);
 mask=any(abs(r.ReferenceGrid)>0,3);
-mask(:,1:6)=false; % The first DL pilot follows silence and understates payload ISI.
+firstKnown=find(any(mask,1),1);mask(:,1:firstKnown)=false; % The first DL pilot follows silence and understates payload ISI.
 % The decoder removes residual common phase using PTRS. Do not count that
 % removable rotation again as spatial interference when choosing its combiner.
 % Fit one phase per symbol from known references only, shared by the UE branches.

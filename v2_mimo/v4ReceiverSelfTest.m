@@ -151,6 +151,13 @@ for user=1:4
  assert(max(abs(actual(mask)-expected(mask)))<1e-11, ...
   'Orthogonal pilots failed to separate frequency-varying user channels');
 end
+% Both TDD layouts carry identical payloads with explicitly disjoint UL,
+% guard, data and pilot resource elements. All four SRS combs remain present.
+dense=v3Config(32,264,"mobile",true,true);rr=v3Resources(dense);
+assert(rr.PayloadBits==71280 && rr.CodedBits==95040 && abs(rr.FrameDuration-.00025)<1e-12);
+srsSymbols=find(any(rr.SRS~=0,[1 3]));assert(isequal(srsSymbols(:).',1:2));
+assert(all(cellfun(@(p)p.Count==34,rr.DownlinkLayout)));
+assert(isequal(unique(rr.DataTimes).',[5 7 9 11]));
 % Decoder feedback crosses both the NR and slot interleavers in RV0 order.
 cfg=v3Config(32,12);cfg.PreserveBitLevels=true;r=muResources(cfg);
 assert(isequal(sort(r.BitOrder),(1:r.CodedBits).'));

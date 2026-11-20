@@ -1,4 +1,4 @@
-function run_v4_train_pzf(folder,useProjection,modelFile,trainFrames,validationFrames,epochs,scheme,matchedPilots,scaledResidual)
+function run_v4_train_pzf(folder,useProjection,modelFile,trainFrames,validationFrames,epochs,scheme,matchedPilots,scaledResidual,densePilots)
 % Fit the receiver on the requested deployment waveform and pilot coordinates.
 if nargin<3,modelFile='v3_refined/v3_model.mat';end
 if nargin<4,trainFrames=128;end
@@ -7,6 +7,7 @@ if nargin<6,epochs=10;end
 if nargin<7,scheme="PZF";end
 if nargin<8,matchedPilots=false;end
 if nargin<9,scaledResidual=false;end
+if nargin<10,densePilots=false;end
 assert(~scaledResidual || (matchedPilots && useProjection));
 scheme=string(scheme);
 numRB=66;if matchedPilots,numRB=264;end
@@ -15,10 +16,10 @@ addpath(pwd,'mu_mimo','v2_mimo');
 loaded=load(modelFile,'model');model=loaded.model;
 assert(model.Version==6 && model.Selection.(scheme)(1)==0);
 if ~isfolder(folder),mkdir(folder);end
-cfg=v3Config(32,numRB,"mobile",matchedPilots);r=v3Resources(cfg);r.ScaledResidual=scaledResidual;
+cfg=v3Config(32,numRB,"mobile",matchedPilots,densePilots);r=v3Resources(cfg);r.ScaledResidual=scaledResidual;r.DensePilots=densePilots;times=cfg.DownlinkSymbols;
 % Refit the deployed transmitter's predictor before collecting receiver data.
 % These channel seeds are disjoint from receiver training, validation and test.
-if scaledResidual
+if scaledResidual && ~densePilots
  base=load(fullfile('prior_receiver',lower(scheme)+"_receiver.mat"),'receiver');
  assert(base.receiver.MatchedPilotMask && base.receiver.TrainingBandwidthRB==numRB);
  model.PriorsTX=base.receiver.PriorsTX;txFrames=base.receiver.TransmitterPriorChannels;
@@ -26,7 +27,7 @@ else
 txStats=v2Prior("init",r.UplinkLayout,0);
 txFrames=64;if matchedPilots,txFrames=24;end
 for frame=1:txFrames
- txCfg=v3Config(32+32*mod(frame-1,2),numRB,"mobile",matchedPilots);
+ txCfg=v3Config(32+32*mod(frame-1,2),numRB,"mobile",matchedPilots,densePilots);
  scene=v2Sounding(txCfg,r,97000000+frame);
  txStats=v2Prior("accumulate",txStats,scene.ULCleanSamples,scene.ULTruth,r.UplinkLayout);
 end
@@ -47,11 +48,11 @@ priors=v2Prior("finalize",stats);clear stats
 % The tuned and matched LMMSE receivers share the same prior and pilot inputs.
 [V,Y]=examples(validation,priors,r,useProjection);
 clear validation
-priors=calibrateVariance(priors,Y,[],0);
+priors=calibrateVariance(priors,Y,[],0,times);
 [X,T]=examples(training,priors,r,useProjection);
 clear training
 receiver=model.Receivers.(scheme);receiver.PriorsRX=priors;
-% Use the same 22 transmitted references for LS and the matched estimators.
+% Use the same transmitted references for LS and the matched estimators.
 legacyFields=intersect(fieldnames(receiver),{'LSInterpolation','PriorsLS'});
 if ~isempty(legacyFields),receiver=rmfield(receiver,legacyFields);end
 net=receiver.NetworkRX;
@@ -98,10 +99,10 @@ for k=1:32:size(V,4)
  idx=k:min(k+31,size(V,4));
  predicted(:,:,:,idx)=extractdata(predict(net,dlarray(V(:,:,:,idx),'SSCB')));
 end
-times=6:12;if scaledResidual,times=unique(r.DataTimes);end
+times=cfg.DownlinkSymbols;if scaledResidual,times=unique(r.DataTimes);end
 target=double(Y(:,times,1:128,:));residual=double(predicted(:,times,1:128,:));
 blend=max(0,min(1,sum(residual.*target,'all')/max(sum(residual.^2,'all'),eps)));
-priors=calibrateVariance(priors,Y,predicted,blend);
+priors=calibrateVariance(priors,Y,predicted,blend,times);
 receiver.PriorsRX=priors;receiver.NetworkRX=net;receiver.BlendRX=blend;receiver.Signature=model.Signature;
 receiver.Signature.TargetCodeRate=cfg.Rate;
 receiver.TrainingChannels=trainFrames;receiver.ValidationChannels=validationFrames;
@@ -110,7 +111,8 @@ receiver.TrainingBandwidthRB=numRB;receiver.TrainingCodeRate=cfg.Rate;
 receiver.TrainingSNR_dB=[min(conditions.SNR1_dB) max(conditions.SNR2_dB)];
 if matchedPilots
  receiver.PilotMasks=cellfun(@(p)p.Mask,r.DownlinkLayout,'UniformOutput',false);
- receiver.MatchedPilotMask=true;
+ receiver.MatchedPilotMask=true;receiver.DensePilots=densePilots;
+ receiver.DownlinkSymbols=cfg.DownlinkSymbols;receiver.UplinkSymbols=cfg.UplinkSymbols;
 end
 receiver.PriorsTX=model.PriorsTX;
 receiver.TransmitterPriorChannels=txFrames;receiver.TransmitterPriorSeedBase=97000000;
@@ -131,7 +133,7 @@ function [records,stats,conditions]=collect(model,r,count,seedBase,stats,trainin
 crops=1+3*r.ScaledResidual;records=cell(8*count*crops,1);at=0;conditions=zeros(count,5);
 for frame=1:count
  is64=mod(frame-1,2);bs=32+32*is64;
- cfg=v3Config(bs,r.K/12,"mobile",r.MatchedPilotMask);seed=seedBase+frame;
+ cfg=v3Config(bs,r.K/12,"mobile",r.MatchedPilotMask,r.DensePilots);seed=seedBase+frame;
  scene=v2Sounding(cfg,r,seed);
  tx=v2CEBase(scene.ULSamples,scene.ULNoise,r.UplinkLayout,model.PriorsTX);
  weights=v3Weights(tx.Wiener,tx.VarianceWiener,scheme,scene,r);
@@ -193,22 +195,22 @@ for k=1:numel(records)
  idx=3*(k-1)+(1:3);X(:,:,:,idx)=x(:,:,:,3:5);T(:,:,:,idx)=y(:,:,:,3:5);
 end
 end
-function priors=calibrateVariance(priors,targets,predictions,blend)
+function priors=calibrateVariance(priors,targets,predictions,blend,times)
 % Receiver reliability is estimated from a separate channel split.
 keys=string(fieldnames(priors));
 for role=["Own" "Other"]
  layers=1;if role=="Other",layers=2:4;end
  for branch=1:4
   indices=reshape((1:4).'+4*(branch-1)+16*(layers-1),1,[]);
-  er=double(targets(:,6:12,indices,:));ei=double(targets(:,6:12,64+indices,:));
-  v=exp(double(targets(:,6:12,128+indices,:)));
+  er=double(targets(:,times,indices,:));ei=double(targets(:,times,64+indices,:));
+  v=exp(double(targets(:,times,128+indices,:)));
   if isempty(predictions)
    factor=max(1e-4,sum(er.^2+ei.^2,'all')/max(sum(v,'all'),eps));
    method='LMMSE';
   else
-   er=er-blend*double(predictions(:,6:12,indices,:));
-   ei=ei-blend*double(predictions(:,6:12,64+indices,:));
-   v=v.*exp(max(-5,min(5,double(predictions(:,6:12,128+indices,:)))));
+   er=er-blend*double(predictions(:,times,indices,:));
+   ei=ei-blend*double(predictions(:,times,64+indices,:));
+   v=v.*exp(max(-5,min(5,double(predictions(:,times,128+indices,:)))));
    factor=max(1e-4,sum(er.^2+ei.^2,'all')/max(sum(v,'all'),eps));
    method='CNN';
   end

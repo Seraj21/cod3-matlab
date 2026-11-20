@@ -7,12 +7,15 @@ r.G = r.K/cfg.PRGWidth;
 r.Samples = sum(r.OFDM.SymbolLengths(1:r.L));
 r.FrameDuration = r.Samples/r.OFDM.SampleRate;
 U = cfg.Users;
-pdsch = nrPDSCHConfig('PRBSet',0:cfg.NumRB-1,'SymbolAllocation',[5 7], ...
+r.GuardSymbols=cfg.GuardSymbols;dl=cfg.DownlinkSymbols;
+dmrsTimes=[6 9 12];if isfield(cfg,'DMRSTimes'),dmrsTimes=cfg.DMRSTimes;end
+assert(isequal(dl,dl(1):dl(end)) && dl(1)==cfg.GuardSymbols+1);
+pdsch = nrPDSCHConfig('PRBSet',0:cfg.NumRB-1,'SymbolAllocation',[dl(1)-1 numel(dl)], ...
     'MappingType','B','Modulation','256QAM','NumLayers',U,'EnablePTRS',false);
 pdsch.DMRS.DMRSPortSet = 0:U-1;
 pdsch.DMRS.NumCDMGroupsWithoutData = ceil(U/2);
 pdsch.DMRS.DMRSAdditionalPosition = 3;
-pdsch.DMRS.CustomSymbolSet = [5 8 11];
+pdsch.DMRS.CustomSymbolSet = dmrsTimes-1;
 idx = nrPDSCHIndices(r.Carrier,pdsch);
 r.DataMask = false(r.K,r.L);
 r.DataMask(mod(double(idx(:))-1,r.K*r.L)+1) = true;
@@ -89,5 +92,5 @@ end
 r.PDSCH = pdsch;
 assert(~any(r.DataMask(any(abs(r.DMRS)>0,3))));
 assert(~any(r.DataMask(any(abs(r.PTRS)>0,3))));
-assert(all(find(any(r.DataMask,1))>=6));
+assert(all(ismember(find(any(r.DataMask,1)),dl)));
 end

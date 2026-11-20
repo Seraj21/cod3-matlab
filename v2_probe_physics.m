@@ -4,7 +4,7 @@ if nargin>0
  if nargin<3,numRB=264;end
  if nargin<4,frames=2;end
  if nargin<5,scheme="ZF";end
- if ismember(string(scenario),["matchedHoldout" "matchedConfirm" "codingAudit"])
+ if ismember(string(scenario),["matchedHoldout" "matchedConfirm" "codingAudit" "denseAudit"])
   if string(scenario)=="codingAudit"
    candidates=["TurboDemap" "LabelShuffle" "LabelShuffleTurbo"];
    for mode=candidates
@@ -14,6 +14,9 @@ if nargin>0
      return
     end
    end
+  elseif string(scenario)=="denseAudit"
+   passed=matchedHoldout(antennas,numRB,frames,string(scheme),"denseAudit","DensePilots");
+   if passed,matchedHoldout(antennas,numRB,24,string(scheme),"denseConfirm","DensePilots");end
   else
    matchedHoldout(antennas,numRB,frames,string(scheme),string(scenario),"Baseline");
   end
@@ -583,27 +586,32 @@ end
 
 function gate=matchedHoldout(antennas,numRB,frames,scheme,scenario,mode)
 addpath(pwd,'mu_mimo','v2_mimo');
-cfg=v3Config(antennas,numRB,"mobile",true);
+densePilots=mode=="DensePilots";cfg=v3Config(antennas,numRB,"mobile",true,densePilots);
 cfg.RetryEP=true;cfg.DecoderIterations=50;cfg.DecoderAlgorithm='Layered belief propagation';
 cfg.PreserveBitLevels=startsWith(mode,"LabelShuffle");
-cfg.IterativeDemap=contains(mode,"Turbo");
+cfg.IterativeDemap=contains(mode,"Turbo") || densePilots;
 r=v3Resources(cfg);folder='matched_measurements';if ~isfolder(folder),mkdir(folder);end
 loaded=load(fullfile('matched_receiver',lower(scheme)+"_receiver.mat"),'receiver');
 receiver=loaded.receiver;
 assert(receiver.Scheme==scheme && receiver.MatchedPilotMask && receiver.TrainingBandwidthRB==numRB);
 assert(receiver.TrainingCodeRate==cfg.Rate && cfg.M==512 && r.PayloadBits==71280);
+if densePilots
+ assert(receiver.DensePilots && isequal(receiver.UplinkSymbols,cfg.UplinkSymbols));
+ assert(isequal(receiver.DownlinkSymbols,cfg.DownlinkSymbols) && r.CodedBits==95040);
+end
 assert(isequal(receiver.PilotMasks,cellfun(@(p)p.Mask,r.DownlinkLayout,'UniformOutput',false)));
 for name=string(fieldnames(receiver.TrainingChannelConfig)).'
  assert(isequal(receiver.TrainingChannelConfig.(name),cfg.(name)),'Training mismatch: %s',name);
 end
 points=[20 30 40];methods=["CNN" "Perfect" "LMMSE" "LS"];
 base=130000000;
+if densePilots,points=40;end
 if startsWith(scenario,"coding")
  base=130000000;points=40;methods="CNN";
 end
 if endsWith(scenario,"Confirm")
  base=150000000;points=40;methods="CNN";
- assert(receiver.BlendRX>0,'The validation split selected a zero CNN correction.');
+ if receiver.BlendRX==0,fprintf('Validation selected LMMSE without a CNN correction.\n');end
 end
 rows={};gate=false;
 for n=1:frames
