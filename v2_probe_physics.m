@@ -4,7 +4,7 @@ if nargin>0
  if nargin<3,numRB=264;end
  if nargin<4,frames=2;end
  if nargin<5,scheme="ZF";end
- if ismember(string(scenario),["matchedHoldout" "matchedConfirm" "codingAudit" "denseAudit" "halfAudit" "halfConfirm"])
+ if ismember(string(scenario),["matchedHoldout" "matchedConfirm" "codingAudit" "denseAudit" "halfAudit" "halfConfirm" "half20Confirm" "halfNoise"])
   if string(scenario)=="codingAudit"
    candidates=["TurboDemap" "LabelShuffle" "LabelShuffleTurbo"];
    for mode=candidates
@@ -14,7 +14,7 @@ if nargin>0
      return
     end
    end
-  elseif ismember(string(scenario),["halfAudit" "halfConfirm"])
+  elseif ismember(string(scenario),["halfAudit" "halfConfirm" "half20Confirm" "halfNoise"])
    matchedHoldout(antennas,numRB,frames,string(scheme),string(scenario),"HalfRate");
   elseif string(scenario)=="denseAudit"
    passed=matchedHoldout(antennas,numRB,frames,string(scheme),"denseAudit","DensePilots");
@@ -609,13 +609,15 @@ for name=string(fieldnames(receiver.TrainingChannelConfig)).'
  assert(isequal(receiver.TrainingChannelConfig.(name),cfg.(name)),'Training mismatch: %s',name);
 end
 points=[20 30 40];methods=["CNN" "Perfect" "LMMSE" "LS"];
-base=130000000;
+base=130000000;gateSNR=40;
+if scenario=="halfNoise",base=190000000;points=0;methods="CNN";end
 if mode=="DensePilots",points=40;end
 if startsWith(scenario,"coding")
  base=130000000;points=40;methods="CNN";
 end
 if endsWith(scenario,"Confirm")
  base=150000000;points=40;methods="CNN";
+ if scenario=="half20Confirm",base=170000000;points=20;gateSNR=20;end
  if receiver.BlendRX==0,fprintf('Validation selected LMMSE without a CNN correction.\n');end
 end
 rows={};gate=false;
@@ -631,13 +633,15 @@ for n=1:frames
  for snr=points
   input=v3Receive(packet,scene,r,snr,false,false);
   [truth,~,~]=v2EstimateRX(input,receiver,r,"Perfect");input.Truth=[];
-  compared=methods;if mode=="HalfRate" && snr<40,compared=["CNN" "Perfect"];end
+  compared=methods;if scenario=="halfAudit" && snr<40,compared=["CNN" "Perfect"];end
   for method=compared
+   actualMethod=method;
+   if method=="CNN" && receiver.BlendRX==0,actualMethod="LMMSE";end
    local=input;
    if method=="Perfect"
     h=truth;v=zeros(size(h));local.Observed=v2BeamObserved(input.Observed,r);
    else
-    [h,v,local.Observed]=v3EstimateRX(input,receiver,r,method);
+    [h,v,local.Observed]=v3EstimateRX(input,receiver,r,actualMethod);
    end
    [errors,failed,~,primary]=v2Decode(local,h,v,bits,cfg,r);
    for u=1:cfg.Users
@@ -648,21 +652,23 @@ for n=1:frames
     energy=sum(abs(reference(data,:)).^2,'all');
     rows(end+1,:)={char(scheme),antennas,seed,snr,char(method),u,r.PayloadBits, ...
      errors(u),logical(failed(u)),errors(u)==0 && ~failed(u),mse/max(energy,eps), ...
-     mean((primary.LLR(:,u)<0)~=coded(:,u))}; %#ok<AGROW>
+     mean((primary.LLR(:,u)<0)~=coded(:,u)),char(actualMethod),receiver.BlendRX,cfg.Rate,r.FrameDuration}; %#ok<AGROW>
    end
    T=cell2table(rows,'VariableNames',{'Precoder','BS','Seed','SNR_dB','Estimator', ...
-    'UE','Bits','Errors','CRCFailed','Delivered','DataNMSE','LinearPreFEC_BER'});
+    'UE','Bits','Errors','CRCFailed','Delivered','DataNMSE','LinearPreFEC_BER', ...
+    'ActualEstimator','CNNBlend','PayloadRate','FrameDuration_s'});
    suffix="";if mode~="Baseline",suffix="_"+mode;end
    writetable(T,fullfile(folder,scheme+"_BS"+antennas+"_"+scenario+suffix+".csv"));
    t=T(T.SNR_dB==snr & string(T.Estimator)==method,:);
    ber=sum(t.Errors)/sum(t.Bits);mbps=sum(t.Bits.*t.Delivered)/(n*r.FrameDuration*1e6);
    fprintf('MATCHED_RESULT %s\n',jsonencode(struct('BS',antennas,'Precoder',scheme, ...
-    'SNR_dB',snr,'Estimator',method,'ReceiverMode',mode,'CodeRate',cfg.Rate,'CodedBitsPerUE',r.CodedBits,'BlendRX',receiver.BlendRX,'Frames',n,'BER',ber,'Goodput_Mbps',mbps, ...
+    'SNR_dB',snr,'Estimator',method,'ActualEstimator',actualMethod,'ReceiverMode',mode,'CodeRate',cfg.Rate,'CodedBitsPerUE',r.CodedBits,'BlendRX',receiver.BlendRX,'Frames',n,'BER',ber,'Goodput_Mbps',mbps, ...
     'CorrectBlocks',nnz(t.Delivered),'Blocks',height(t),'Bits',sum(t.Bits))));
-   if method=="CNN" && snr==40,gate=ber<1e-5 && mbps>=1140;end
+   if method=="CNN" && snr==gateSNR,gate=ber<1e-5 && mbps>=1140;end
   end
  end
 end
+if scenario=="halfNoise",return;end
 fprintf('MATCHED_GATE %s\n',jsonencode(struct('BS',antennas,'Precoder',scheme,'ReceiverMode',mode,'Passed',gate)));
 if endsWith(scenario,"Confirm"),assert(gate,'Fresh channels missed the joint target');end
 end

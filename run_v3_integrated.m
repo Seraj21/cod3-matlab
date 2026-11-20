@@ -5,7 +5,7 @@ precoder=string(precoder);stage=string(stage);
 if nargin<5,numRB=264;end
 assert(ismember(precoder,["MR" "ZF" "PZF"]));
 assert(ismember(antennas,[32 64]));
-if stage=="halfConfirm"
+if ismember(stage,["halfConfirm" "half20Confirm"])
  assert(batch==0 && numRB==264 && precoder=="ZF");
  v2_probe_physics(stage,antennas,numRB,24,precoder);return
 end
