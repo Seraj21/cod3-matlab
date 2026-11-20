@@ -7,7 +7,11 @@ if method=="LS" && isfield(receiver,'LSInterpolation')
 end
 [h,v,observed]=v2EstimateRX(input,receiver,r,method);
 if isfield(r,'PilotTracking') && method~="Perfect"
- [h,v]=pilotPosterior(observed,h,input,r);
+ if r.OrthogonalDMRS
+  [h,v]=separatedPosterior(observed,h,input,r);
+ else
+  [h,v]=pilotPosterior(observed,h,input,r);
+ end
 end
 end
 
@@ -52,6 +56,36 @@ for ue=1:numel(input.TimingOffset)
     v(bins,:,rows,ports(k))=repmat(reshape(post,W,L),1,1,4);
    end
   end
+ end
+end
+end
+
+function [h,v]=separatedPosterior(y,h,input,r)
+% Every pilot is isolated at one RE. After division by that pilot all
+% frequency groups share the same sampling matrix, allowing batched solves.
+p=r.PilotTracking;W=p.Width;G=r.K/W;L=r.L;
+[f,t]=ndgrid(0:W-1,1:L);f=f(:);time=p.Time(t(:));time=time(:);
+Ct=besselj(0,2*pi*p.Doppler*(time-time.'));
+power=10.^(p.Gains(:)/10);power=power/sum(power);
+v=zeros(size(h));
+for ue=1:numel(input.TimingOffset)
+ rows=(ue-1)*4+(1:4);
+ delays=p.Delays(:)+(p.FilterDelay-input.TimingOffset(ue))/r.OFDM.SampleRate;
+ F=exp(-2i*pi*(0:W-1).'*p.Spacing*delays.');
+ Cf=(F.*power.')*F';C=Cf(f+1,f+1).*Ct;
+ for port=1:4
+  ref=reshape(permute(reshape(r.ReferenceGrid(:,:,port),W,G,L),[1 3 2]),W*L,G);
+  at=find(ref(:,1));assert(isequal(ref~=0,repmat(ref(:,1)~=0,1,G)));
+  samples=reshape(permute(reshape(y(:,:,rows),W,G,L,4),[1 3 2 4]),W*L,G,4);
+  z=reshape(samples(at,:,:)./ref(at,:),numel(at),G*4);
+  prior=reshape(mean(reshape(h(:,6:12,rows,port),W,G,7,4),[1 3]),1,G*4);
+  scale=max(mean(abs(z).^2,1),eps);
+  noiseRatio=max(mean(input.Noise(rows))/(4*median(scale)),3e-4);
+  S=C(at,at)+noiseRatio*eye(numel(at));R=chol((S+S')/2,'lower');
+  gain=C(:,at)/R';fitted=prior+gain*(R\(z-prior));
+  variance=max(noiseRatio/16,1-sum(abs(gain).^2,2)).*scale;
+  h(:,:,rows,port)=reshape(permute(reshape(fitted,W,L,G,4),[1 3 2 4]),r.K,L,4);
+  v(:,:,rows,port)=reshape(permute(reshape(variance,W,L,G,4),[1 3 2 4]),r.K,L,4);
  end
 end
 end

@@ -15,6 +15,14 @@ if r.OrthogonalDMRS
  end
  assert(max(abs(sum(abs(r.DMRS).^2,3)-sum(abs(original).^2,3)),[],'all')<1e-10);
  assert(all(sum(abs(r.DMRS)>0,3)<=1,'all'));
+ if isfield(cfg,'StaggeredDMRS') && cfg.StaggeredDMRS
+  % Across three DMRS symbols a port visits three different residue classes.
+  for k=1:numel(times)
+   r.DMRS(:,times(k),:)=circshift(r.DMRS(:,times(k),:),k-1,1);
+  end
+  r.StaggeredDMRS=true;
+  assert(max(abs(sum(abs(r.DMRS).^2,3)-sum(abs(original).^2,3)),[],'all')<1e-10);
+ end
  r.ReferenceGrid=r.DMRS+r.PTRS;
 end
 r.DMRSLegacyLayouts=r.DownlinkLayout;

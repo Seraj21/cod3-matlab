@@ -6,7 +6,13 @@ capture=nargout>3;
 [bits,failed,details,primary]=pass(input,h,variance,cfg,r,false,users,capture);
 failed(~users)=false;
 firstFailed=failed;
-joint=isfield(cfg,'RXDetector') && string(cfg.RXDetector)=="Sphere";
+joint=isfield(cfg,'RXDetector') && ismember(string(cfg.RXDetector),["Sphere" "EP"]);
+if isfield(cfg,'RetryEP') && cfg.RetryEP && any(failed) && ~joint
+ ep=cfg;ep.RXDetector='EP';
+ retryUsers=failed;
+ [retry,retryFailed]=pass(input,h,variance,ep,r,false,retryUsers,false);
+ bits(:,retryUsers)=retry(:,retryUsers);failed(retryUsers)=retryFailed(retryUsers);
+end
 if cfg.DecoderDual && any(failed) && ~joint
  [retry,retryFailed,retryDetails]=pass(input,h,variance,cfg,r,true,failed,false);
  accepted=failed & ~retryFailed;
@@ -24,7 +30,7 @@ function [decoded,failed,details,primary]=pass(input,h,channelVariance,cfg,r,fix
 decoded=zeros(r.PayloadBits,cfg.Users,'int8');failed=true(1,cfg.Users);
 evm=zeros(1,cfg.Users);
 detectionSeconds=zeros(1,cfg.Users);
-joint=isfield(cfg,'RXDetector') && string(cfg.RXDetector)=="Sphere";
+joint=isfield(cfg,'RXDetector') && ismember(string(cfg.RXDetector),["Sphere" "EP"]);
 primary=struct;
 if capture
  primary.Symbols=zeros(numel(r.DataIndices),cfg.Users,'like',input.Observed);
@@ -86,7 +92,10 @@ for u=find(users)
  end
  extra=interp1(times,extra,min(times(end),max(times(1),(1:r.L).')),'linear');
  effectiveVariance=max(1e-7,softVariance(r.DataIndices)+extra(r.DataTimes));
- if joint
+ if joint && string(cfg.RXDetector)=="EP"
+  clock=tic;llr=epLLR(input.Observed(:,:,rows),G,disturbance,phase,u,cfg,r);
+  detectionSeconds(u)=toc(clock);
+ elseif joint
   [llr,detectionSeconds(u)]=jointLLR(input.Observed(:,:,rows),G,disturbance,phase,u,cfg,r);
  else
   llr=qamdemod(equalized(r.DataIndices),cfg.M,'OutputType','approxllr', ...
@@ -158,4 +167,70 @@ for first=1:chunk:N
  end
 end
 seconds=toc(clock);
+end
+
+function llr=epLLR(observed,G,disturbance,phase,user,cfg,r)
+% Gaussian expectation propagation on four discrete streams at one UE.
+% Fixed iterations and bounded page batches; no sphere/tree enumeration.
+R=size(observed,3);U=cfg.Users;K=r.K;N=numel(r.DataIndices);
+G=reshape(G,R,U,[]);C=reshape(disturbance,R,R,[]);
+y=reshape(observed,K*r.L,R).';
+points=qammod((0:cfg.M-1).',cfg.M,'UnitAveragePower',true);
+[ix,~,a]=unique(real(points));[qx,~,b]=unique(imag(points));
+occupied=logical(accumarray([a b],1,[numel(ix) numel(qx)]));
+[patterns,~,groups]=unique(occupied,'rows');
+blocks=cell(size(patterns,1),2);
+for g=1:size(patterns,1)
+ blocks{g,1}=ix(groups==g).';blocks{g,2}=qx(patterns(g,:)).';
+end
+llr=zeros(cfg.Qm,N);I=eye(U);
+for first=1:512:N
+ n=first:min(first+511,N);at=r.DataIndices(n);B=numel(n);
+ A=G(:,:,at);cov=C(:,:,at);
+ obs=reshape(y(:,at).*exp(-1i*reshape(phase(r.DataTimes(n)),1,[])),R,1,B);
+ matched=pagemtimes(A,'ctranspose',pagemldivide(cov,cat(2,A,obs)),'none');
+ gram=matched(:,1:U,:);rhs=matched(:,end,:);
+ lambda=ones(U,B);eta=zeros(U,B);
+ diagonal=(1:U+1:U^2).'+(0:B-1)*U^2;
+ for iteration=1:5
+  normal=gram;normal(diagonal)=normal(diagonal)+lambda;
+  posterior=pagemldivide(normal,repmat(I,1,1,B));
+  meanPost=reshape(pagemtimes(posterior,rhs+reshape(eta,U,1,B)),U,B);
+  varPost=max(real(posterior(diagonal)),1e-12);
+  cavity=1./max(1./varPost-lambda,1e-9);
+  center=cavity.*(meanPost./varPost-eta);
+  if iteration==5,break;end
+  [m,v]=qamMoments(center(:),cavity(:),blocks);
+  v=reshape(max(v,1e-8),U,B);m=reshape(m,U,B);
+  precision=1./v-1./cavity;location=m./v-center./cavity;
+  ok=precision>0 & precision<1e8 & isfinite(location);
+  lambda(ok)=.55*lambda(ok)+.45*precision(ok);
+  eta(ok)=.55*eta(ok)+.45*location(ok);
+ end
+ z=reshape(center(user,:),[],1);
+ raw=qamdemod(z,cfg.M,'OutputType','approxllr','UnitAveragePower',true,'NoiseVariance',1);
+ llr(:,n)=reshape(raw,cfg.Qm,B)./cavity(user,:);
+end
+llr=llr(:);assert(all(isfinite(llr)));
+end
+
+function [m,v]=qamMoments(z,noise,blocks)
+% Sum exactly over a square, rectangular or cross-QAM constellation by
+% factoring each disjoint rectangular subset into two one-dimensional sums.
+G=size(blocks,1);n=numel(z);
+logWeight=zeros(n,G);meanByGroup=complex(zeros(n,G));varianceByGroup=zeros(n,G);
+for g=1:G
+ x=blocks{g,1};y=blocks{g,2};
+ dx=(real(z)-x).^2;dy=(imag(z)-y).^2;
+ xmin=min(dx,[],2);ymin=min(dy,[],2);
+ wx=exp(-(dx-xmin)./noise);wy=exp(-(dy-ymin)./noise);
+ sx=sum(wx,2);sy=sum(wy,2);wx=wx./sx;wy=wy./sy;
+ mx=wx*x.';my=wy*y.';
+ meanByGroup(:,g)=complex(mx,my);
+ varianceByGroup(:,g)=sum(wx.*(x-mx).^2,2)+sum(wy.*(y-my).^2,2);
+ logWeight(:,g)=log(sx)+log(sy)-(xmin+ymin)./noise;
+end
+mix=exp(logWeight-max(logWeight,[],2));mix=mix./sum(mix,2);
+m=sum(mix.*meanByGroup,2);
+v=sum(mix.*(varianceByGroup+abs(meanByGroup-m).^2),2);
 end

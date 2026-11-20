@@ -4,8 +4,8 @@ if nargin>0
  if nargin<3,numRB=264;end
  if nargin<4,frames=2;end
  if nargin<5,scheme="ZF";end
- if string(scenario)=="trackedFirstPass"
-  trackedFirstPass(antennas,numRB,frames,string(scheme));
+ if ismember(string(scenario),["trackedFirstPass" "staggeredFirstPass"])
+  trackedFirstPass(antennas,numRB,frames,string(scheme),string(scenario)=="staggeredFirstPass");
  elseif string(scenario)=="firstPassJoint"
   firstPassJoint(antennas,numRB,frames,string(scheme));
  elseif string(scenario)=="harqRecovery"
@@ -568,7 +568,7 @@ fprintf('FIRST_PASS_ACCEPTANCE_RESULT %s\n',jsonencode(gate));
 assert(gate.Passed,'First-pass reliability acceptance was not met. Keep baseline and failure records.');
 end
 
-function trackedFirstPass(antennas,numRB,frames,scheme)
+function trackedFirstPass(antennas,numRB,frames,scheme,staggered)
 % Matched observations, frozen CNN and a single radio transmission.
 addpath(pwd,'mu_mimo','v2_mimo');
 file=fullfile('receiver_audit','integrated_receiver',lower(scheme)+"_receiver.mat");
@@ -579,6 +579,7 @@ for name=string(fieldnames(receiver.TrainingChannelConfig)).'
  assert(isequal(receiver.TrainingChannelConfig.(name),cfg.(name)));
 end
 cfg.BeamWidth=24;cfg.PrecoderTimeMode='slot';
+cfg.OrthogonalDMRS=staggered;cfg.StaggeredDMRS=staggered;cfg.RetryEP=staggered;
 cfg.DecoderIterations=50;cfg.DecoderAlgorithm='Layered belief propagation';
 r=v3Resources(cfg);assert(cfg.M==512 && cfg.Rate==.75 && r.PayloadBits==71280);
 targetMbps=1140;targetBER=1e-5;snr=40;
@@ -593,6 +594,11 @@ tracking=struct('Width',cfg.BeamWidth,'Delays',p.PathDelays,'Gains',p.AveragePat
  'Doppler',cfg.Speed/3.6*cfg.CarrierFrequency/299792458, ...
  'Time',cumsum(double(r.OFDM.SymbolLengths(1:r.L)))/r.OFDM.SampleRate);
 out='tracked_first_pass';if ~isfolder(out),mkdir(out);end
+if staggered
+ baseline=v3Resources(v3Config(antennas,numRB,"mobile"));
+ assert(isequal(r.DataIndices,baseline.DataIndices));
+ assert(max(abs(sum(abs(r.ReferenceGrid).^2,3)-sum(abs(baseline.ReferenceGrid).^2,3)),[],'all')<1e-10);
+end
 rows={};methods=["CNN" "Perfect" "LMMSE" "LS"];
 for n=1:frames
  seed=110000000+n;
@@ -605,13 +611,14 @@ for n=1:frames
   local=input;rr=r;
   if method=="Perfect",local.Truth=oracle;else,rr.PilotTracking=tracking;end
   [h,v,observed]=v3EstimateRX(local,receiver,rr,method);local.Observed=observed;
-  [errors,failed]=v2Decode(local,h,v,bits,cfg,r);
+  [errors,failed,~,primary]=v2Decode(local,h,v,bits,cfg,r);
   for u=1:cfg.Users
    rows(end+1,:)={char(scheme),antennas,seed,snr,char(method),u,r.PayloadBits, ...
-    errors(u),logical(failed(u)),errors(u)==0 && ~failed(u)}; %#ok<AGROW>
+    errors(u),logical(failed(u)),errors(u)==0 && ~failed(u), ...
+    mean(abs(primary.Symbols(:,u)-grid(r.DataIndices+(u-1)*r.K*r.L)).^2)}; %#ok<AGROW>
   end
   T=cell2table(rows,'VariableNames',{'Precoder','BS','Seed','SNR_dB','Estimator', ...
-   'UE','Bits','Errors','CRCFailed','Delivered'});
+   'UE','Bits','Errors','CRCFailed','Delivered','LinearSymbolMSE'});
   writetable(T,fullfile(out,scheme+"_BS"+antennas+".csv"));
   selected=T(string(T.Estimator)==method,:);
   summary=struct('Precoder',scheme,'BS',antennas,'SNR_dB',snr,'Estimator',method, ...

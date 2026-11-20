@@ -36,6 +36,9 @@ input=struct('Observed',sum(h.*reshape(grid,r.K,r.L,1,4),4)*exp(.29i), ...
  'Noise',1e-3*ones(1,16));
 [errors,failed]=v2Decode(input,h,zeros(size(h)),payload,cfg,r);
 assert(all(errors==0 & ~failed),'Joint receiver failed coupled-stream noiseless round trip');
+cfg.RXDetector='EP';
+[errors,failed]=v2Decode(input,h,zeros(size(h)),payload,cfg,r);
+assert(all(errors==0 & ~failed),'EP failed the four-stream coupled-channel test');
 % Compare every RV against the toolbox's independent standard-QAM matcher.
 for setup=[512 1024 .5;12000 16000 .75].'
  for qm=[4 8]

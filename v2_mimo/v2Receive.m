@@ -41,9 +41,13 @@ for u=1:cfg.Users
  end
  offsets(u)=offset;frequency(u)=f;
 end
-input=struct('Observed',observed,'Samples',muPilotObservations(observed,r,"DL"), ...
+% The V3 receiver extracts isolated references using their actual per-port grid.
+% A legacy CDM solve is singular on some staggered pilot pairs.
+extract=@(x)muPilotObservations(x,r,"DL");
+if isfield(r,'OrthogonalDMRS') && r.OrthogonalDMRS,extract=@(x)v3PilotObservations(x,r);end
+input=struct('Observed',observed,'Samples',extract(observed), ...
  'Noise',noise,'Truth',truth,'TimingOffset',offsets,'CFO',frequency);
 if includeClean
- input.CleanSamples=muPilotObservations(clean,r,"DL");input.CleanObserved=clean;
+ input.CleanSamples=extract(clean);input.CleanObserved=clean;
 end
 end
