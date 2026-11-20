@@ -1,4 +1,4 @@
-name: Integrated V3 200 MHz first-pass joint detection
+name: Integrated V3 200 MHz first-transmission measurements
 on:
   push:
     branches: [mu-cnn-v2]

@@ -45,7 +45,13 @@ for user=1:cfg.Users
  outside=find(isnan(which));nearest=nearestNeighbor(tri,query(outside,:));
  operator=operator+sparse(outside,nearest,ones(numel(outside),1),p.W*p.L,p.Count);
  p.Linear=full(operator.');
- assert(p.Count==p.W/4*numel(old.Times)+numel(unique(r.DataTimes)) && max(abs(p.Linear(:,p.Observed)-eye(p.Count)),[],'all')<1e-10);
+ expected=p.W/4*numel(old.Times)+numel(unique(r.DataTimes));
+ assert(p.Count==expected,'Port %d: found %d pilots, expected %d (%d DMRS times, %d data times)', ...
+  user,p.Count,expected,numel(old.Times),numel(unique(r.DataTimes)));
+ % At known coordinates LS returns the observation exactly. Only unobserved
+ % positions require point-location interpolation or nearest extrapolation.
+ p.Linear(:,p.Observed)=eye(p.Count);
+ assert(max(abs(sum(p.Linear,1)-1))<1e-10 && all(isfinite(p.Linear),'all'));
  assert(abs(p.NoiseGain-.25)<1e-12);p.NoiseGain=.25;
  % Isolated PTRS power and despread DMRS have the same observation-noise gain.
  values=r.PTRS(1:cfg.PRGWidth,:,user);values=values(values~=0);

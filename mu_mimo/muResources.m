@@ -16,13 +16,27 @@ pdsch.DMRS.DMRSPortSet = 0:U-1;
 pdsch.DMRS.NumCDMGroupsWithoutData = ceil(U/2);
 pdsch.DMRS.DMRSAdditionalPosition = 3;
 pdsch.DMRS.CustomSymbolSet = dmrsTimes-1;
-idx = nrPDSCHIndices(r.Carrier,pdsch);
 r.DataMask = false(r.K,r.L);
-r.DataMask(mod(double(idx(:))-1,r.K*r.L)+1) = true;
-idx = nrPDSCHDMRSIndices(r.Carrier,pdsch);
-sym = nrPDSCHDMRS(r.Carrier,pdsch);
 r.DMRS = complex(zeros(r.K,r.L,U));
-r.DMRS(idx) = sym;
+if isfield(cfg,'DensePilots') && cfg.DensePilots
+    % Explicit experimental TDD map. Fill four payload symbols and reserve
+    % the five others for pilots before puncturing the phase references.
+    r.DataMask(:,setdiff(dl,dmrsTimes))=true;
+    for group=1:2
+        freq=group:2:r.K;
+        stream=RandStream('mt19937ar','Seed',2300+group);
+        q=complex(1-2*randi(stream,[0 1],numel(freq),numel(dmrsTimes)), ...
+                  1-2*randi(stream,[0 1],numel(freq),numel(dmrsTimes)))/sqrt(2);
+        port=2*group-1;
+        r.DMRS(freq,dmrsTimes,port)=q;
+        r.DMRS(freq,dmrsTimes,port+1)=q.*repmat([1;-1],numel(freq)/2,1);
+    end
+else
+    idx = nrPDSCHIndices(r.Carrier,pdsch);
+    r.DataMask(mod(double(idx(:))-1,r.K*r.L)+1) = true;
+    idx = nrPDSCHDMRSIndices(r.Carrier,pdsch);
+    r.DMRS(idx) = nrPDSCHDMRS(r.Carrier,pdsch);
+end
 r.DownlinkLayout = cell(U,1);
 r.DMRSGroups = cell(ceil(U/2),1);
 for group = 1:ceil(U/2)
