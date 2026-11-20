@@ -4,7 +4,9 @@ if nargin>0
  if nargin<3,numRB=264;end
  if nargin<4,frames=2;end
  if nargin<5,scheme="ZF";end
- if string(scenario)=="firstPassJoint"
+ if string(scenario)=="trackedFirstPass"
+  trackedFirstPass(antennas,numRB,frames,string(scheme));
+ elseif string(scenario)=="firstPassJoint"
   firstPassJoint(antennas,numRB,frames,string(scheme));
  elseif string(scenario)=="harqRecovery"
   harqRecovery(antennas,numRB,frames,string(scheme));
@@ -564,4 +566,63 @@ gate=struct('Precoder',scheme,'BS',antennas,'ExpectedBlocks',frames*cfg.Users, .
  'Requirement','All CNN blocks delivered on first transmission; no extra pilots, lower code rate or HARQ');
 fprintf('FIRST_PASS_ACCEPTANCE_RESULT %s\n',jsonencode(gate));
 assert(gate.Passed,'First-pass reliability acceptance was not met. Keep baseline and failure records.');
+end
+
+function trackedFirstPass(antennas,numRB,frames,scheme)
+% Matched observations, frozen CNN and a single radio transmission.
+addpath(pwd,'mu_mimo','v2_mimo');
+file=fullfile('receiver_audit','integrated_receiver',lower(scheme)+"_receiver.mat");
+loaded=load(file,'receiver');receiver=loaded.receiver;
+cfg=v3Config(antennas,numRB,"mobile");
+assert(receiver.Scheme==scheme && receiver.TrainingCodeRate==cfg.Rate);
+for name=string(fieldnames(receiver.TrainingChannelConfig)).'
+ assert(isequal(receiver.TrainingChannelConfig.(name),cfg.(name)));
+end
+cfg.BeamWidth=24;cfg.PrecoderTimeMode='slot';
+cfg.DecoderIterations=50;cfg.DecoderAlgorithm='Layered belief propagation';
+r=v3Resources(cfg);assert(cfg.M==512 && cfg.Rate==.75 && r.PayloadBits==71280);
+targetMbps=1140;targetBER=1e-5;snr=40;
+assert(abs(cfg.Users*r.PayloadBits/r.FrameDuration/1e6-1140.48)<1e-6);
+% Model statistics and the receiver's timing estimate are available at reception.
+% Never pass a seeded channel object or instantaneous path gains to the estimator.
+profile=nrTDLChannel('DelayProfile','TDL-C','DelaySpread',cfg.DelaySpread, ...
+ 'SampleRate',r.OFDM.SampleRate);
+p=info(profile);
+tracking=struct('Width',cfg.BeamWidth,'Delays',p.PathDelays,'Gains',p.AveragePathGains, ...
+ 'FilterDelay',p.ChannelFilterDelay,'Spacing',cfg.SubcarrierSpacing*1000, ...
+ 'Doppler',cfg.Speed/3.6*cfg.CarrierFrequency/299792458, ...
+ 'Time',cumsum(double(r.OFDM.SymbolLengths(1:r.L)))/r.OFDM.SampleRate);
+out='tracked_first_pass';if ~isfolder(out),mkdir(out);end
+rows={};methods=["CNN" "Perfect" "LMMSE" "LS"];
+for n=1:frames
+ seed=110000000+n;
+ scene=v2Sounding(cfg,r,seed);[grid,bits]=muPayload(cfg,r,muSeed(seed,70));
+ tx=v2CEBase(scene.ULSamples,scene.ULNoise,r.UplinkLayout,receiver.PriorsTX);
+ [w,d]=v3Weights(tx.Wiener,tx.VarianceWiener,scheme,scene,r);assert(d.MaximumPowerError<1e-6);
+ packet=v2Waveform(scene,r,grid,w,true);
+ input=v3Receive(packet,scene,r,snr,false,false);oracle=input.Truth;input.Truth=[];
+ for method=methods
+  local=input;rr=r;
+  if method=="Perfect",local.Truth=oracle;else,rr.PilotTracking=tracking;end
+  [h,v,observed]=v3EstimateRX(local,receiver,rr,method);local.Observed=observed;
+  [errors,failed]=v2Decode(local,h,v,bits,cfg,r);
+  for u=1:cfg.Users
+   rows(end+1,:)={char(scheme),antennas,seed,snr,char(method),u,r.PayloadBits, ...
+    errors(u),logical(failed(u)),errors(u)==0 && ~failed(u)}; %#ok<AGROW>
+  end
+  T=cell2table(rows,'VariableNames',{'Precoder','BS','Seed','SNR_dB','Estimator', ...
+   'UE','Bits','Errors','CRCFailed','Delivered'});
+  writetable(T,fullfile(out,scheme+"_BS"+antennas+".csv"));
+  selected=T(string(T.Estimator)==method,:);
+  summary=struct('Precoder',scheme,'BS',antennas,'SNR_dB',snr,'Estimator',method, ...
+   'Frames',n,'Bits',sum(selected.Bits),'Errors',sum(selected.Errors), ...
+   'BER',sum(selected.Errors)/sum(selected.Bits),'CorrectBlocks',nnz(selected.Delivered), ...
+   'Blocks',height(selected),'Goodput_Mbps',sum(selected.Bits.*selected.Delivered)/(n*r.FrameDuration*1e6));
+  fprintf('TRACKED_FIRST_PASS %s\n',jsonencode(summary));
+  if method=="CNN",candidate=summary;end
+ end
+end
+assert(candidate.BER<targetBER && candidate.Goodput_Mbps>=targetMbps, ...
+ 'Measured CNN first-pass targets missed: BER %.6g, goodput %.3f Mbps.', ...
+ candidate.BER,candidate.Goodput_Mbps);
 end
