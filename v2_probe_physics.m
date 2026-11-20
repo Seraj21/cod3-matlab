@@ -4,8 +4,8 @@ if nargin>0
  if nargin<3,numRB=264;end
  if nargin<4,frames=2;end
  if nargin<5,scheme="ZF";end
- if ismember(string(scenario),["trackedFirstPass" "staggeredFirstPass"])
-  trackedFirstPass(antennas,numRB,frames,string(scheme),string(scenario)=="staggeredFirstPass");
+ if ismember(string(scenario),["trackedFirstPass" "staggeredFirstPass" "soundingFirstPass" "soundingHoldout"])
+  trackedFirstPass(antennas,numRB,frames,string(scheme),string(scenario));
  elseif string(scenario)=="firstPassJoint"
   firstPassJoint(antennas,numRB,frames,string(scheme));
  elseif string(scenario)=="harqRecovery"
@@ -568,7 +568,7 @@ fprintf('FIRST_PASS_ACCEPTANCE_RESULT %s\n',jsonencode(gate));
 assert(gate.Passed,'First-pass reliability acceptance was not met. Keep baseline and failure records.');
 end
 
-function trackedFirstPass(antennas,numRB,frames,scheme,staggered)
+function trackedFirstPass(antennas,numRB,frames,scheme,scenario)
 % Matched observations, frozen CNN and a single radio transmission.
 addpath(pwd,'mu_mimo','v2_mimo');
 file=fullfile('receiver_audit','integrated_receiver',lower(scheme)+"_receiver.mat");
@@ -578,7 +578,10 @@ assert(receiver.Scheme==scheme && receiver.TrainingCodeRate==cfg.Rate);
 for name=string(fieldnames(receiver.TrainingChannelConfig)).'
  assert(isequal(receiver.TrainingChannelConfig.(name),cfg.(name)));
 end
+staggered=scenario~="trackedFirstPass";
+wideband=ismember(scenario,["soundingFirstPass" "soundingHoldout"]);
 cfg.BeamWidth=24;cfg.PrecoderTimeMode='slot';
+if wideband,cfg.BeamWidth=8;end
 cfg.OrthogonalDMRS=staggered;cfg.StaggeredDMRS=staggered;cfg.RetryEP=staggered;
 cfg.DecoderIterations=50;cfg.DecoderAlgorithm='Layered belief propagation';
 r=v3Resources(cfg);assert(cfg.M==512 && cfg.Rate==.75 && r.PayloadBits==71280);
@@ -600,11 +603,20 @@ if staggered
  assert(max(abs(sum(abs(r.ReferenceGrid).^2,3)-sum(abs(baseline.ReferenceGrid).^2,3)),[],'all')<1e-10);
 end
 rows={};methods=["CNN" "Perfect" "LMMSE" "LS"];
+if wideband,methods=["CNN" "Perfect"];end
 for n=1:frames
- seed=110000000+n;
+ seed=110000000+n;if scenario=="soundingHoldout",seed=120000000+n;end
  scene=v2Sounding(cfg,r,seed);[grid,bits]=muPayload(cfg,r,muSeed(seed,70));
- tx=v2CEBase(scene.ULSamples,scene.ULNoise,r.UplinkLayout,receiver.PriorsTX);
- [w,d]=v3Weights(tx.Wiener,tx.VarianceWiener,scheme,scene,r);assert(d.MaximumPowerError<1e-6);
+ if wideband
+  assert(scheme=="ZF");
+  tx=soundingPrediction(scene,r,tracking);
+  [w,d]=groupZF(tx,scene,r);
+  fprintf('SRS_FIT seed=%d mean_relative_residual=%.6g\n',seed,mean(tx.PilotResidual));
+ else
+  tx=v2CEBase(scene.ULSamples,scene.ULNoise,r.UplinkLayout,receiver.PriorsTX);
+  [w,d]=v3Weights(tx.Wiener,tx.VarianceWiener,scheme,scene,r);
+ end
+ assert(d.MaximumPowerError<1e-6);
  packet=v2Waveform(scene,r,grid,w,true);
  input=v3Receive(packet,scene,r,snr,false,false);oracle=input.Truth;input.Truth=[];
  for method=methods
@@ -632,4 +644,78 @@ end
 assert(candidate.BER<targetBER && candidate.Goodput_Mbps>=targetMbps, ...
  'Measured CNN first-pass targets missed: BER %.6g, goodput %.3f Mbps.', ...
  candidate.BER,candidate.Goodput_Mbps);
+end
+
+function state=soundingPrediction(scene,r,tracking)
+% Fit nominal TDL taps to the whole band using only received SRS. The timing
+% estimate and the link profile are available at the BS; true gains are not.
+cfg=scene.Config;ports=cfg.RFChains;users=cfg.Users;ul=cfg.UplinkSymbols;
+tau=tracking.Delays(:)+(tracking.FilterDelay-scene.UplinkOffset)/r.OFDM.SampleRate;
+power=10.^(tracking.Gains(:)/10);power=power/sum(power);
+f=(-r.K/2:r.K/2-1).'*tracking.Spacing;
+basis=exp(-2i*pi*f*tau.');
+% Known path powers regularize unresolved delays on the regularly spaced SRS.
+times=tracking.Time(:);delta=times-times.';
+temporal=besselj(0,2*pi*tracking.Doppler*delta);
+ridge=1e-3;
+predict=temporal(:,ul)/(temporal(ul,ul)+ridge*eye(numel(ul)));
+state.Wiener=complex(zeros(r.K,r.L,ports,users));
+state.VarianceWiener=zeros(r.K,r.L,ports,users);
+state.PilotResidual=zeros(1,users);
+for u=1:users
+ freq=find(r.SRS(:,ul(1),u));B=basis(freq,:);
+ samples=reshape(scene.ULSamples(freq,ul,:,u),numel(freq),[]);
+ noiseRatio=max(scene.ULNoise/max(mean(abs(samples).^2,'all'),eps),ridge);
+ taps=(B'*B+noiseRatio*diag(1./power))\(B'*samples);
+ atPilot=reshape(basis*taps,r.K,numel(ul),ports);
+ forecast=pagemtimes(atPilot,predict.');
+ state.Wiener(:,:,:,u)=forecast;
+ residual=samples-B*taps;
+ state.PilotResidual(u)=sum(abs(residual).^2,'all')/max(sum(abs(samples).^2,'all'),eps);
+ err=max(mean(abs(residual).^2,'all'),scene.ULNoise);
+ uncertainty=max(0,1-sum(predict.*temporal(:,ul),2)).';
+ state.VarianceWiener(:,:,:,u)=err+abs(forecast).^2.*uncertainty;
+end
+end
+
+function [weights,report]=groupZF(state,scene,r)
+% Null dominant interfering modes over each beam group; select the strongest
+% desired direction within the remaining nullspace. Digital weights are
+% normalized to the same radiated precoder power as the ordinary ZF case.
+cfg=scene.Config;W=cfg.BeamWidth;U=cfg.Users;Q=cfg.RFChains;times=cfg.DownlinkSymbols;
+weights=complex(zeros(Q,U,r.K,r.L,'single'));
+for first=1:W:r.K
+ bins=first:first+W-1;spans=cell(1,U);covs=cell(1,U);
+ for u=1:U
+  H=reshape(state.Wiener(bins,times,:,u),[],Q);
+  C=(H'*H)/size(H,1);C=(C+C')/2;covs{u}=C;
+  [vec,val]=eig(C,'vector');[d,order]=sort(real(val),'descend');
+  rank=1+(d(2)>.02*d(1));spans{u}=vec(:,order(1:rank));
+ end
+ % Compare classical mean-channel ZF and subspace ZF on the same predicted
+ % channels. Protect the weakest user rather than maximizing sum power.
+ Hmean=reshape(mean(state.Wiener(bins,times,:,:),[1 2]),Q,U).';
+ base=pinv(Hmean);base=base./max(vecnorm(base),eps)/sqrt(U);
+ B=complex(zeros(Q,U));
+ for u=1:U
+  other=setdiff(1:U,u);span=[spans{other}];
+  N=null(span');S=N'*covs{u}*N;[V,d]=eig((S+S')/2,'vector');
+  [~,k]=max(real(d));b=N*V(:,k);
+  [~,anchor]=max(abs(b));b=b*exp(-1i*angle(b(anchor)));
+  B(:,u)=b/(norm(b)*sqrt(U));
+ end
+ scores=zeros(2,U);
+ for u=1:U
+  H=reshape(state.Wiener(bins,times,:,u),[],Q);candidates={base,B};
+  for k=1:2
+   gain=abs(H*candidates{k}).^2;
+   disturbance=sum(gain(:,setdiff(1:U,u)),2)+.002;
+   scores(k,u)=mean(log2(1+gain(:,u)./disturbance));
+  end
+ end
+ if min(scores(1,:))>min(scores(2,:)),B=base;end
+ weights(:,:,bins,times)=repmat(single(B),1,1,W,numel(times));
+end
+power=squeeze(sum(abs(double(weights(:,:,:,times))).^2,[1 2]));
+report=struct('MaximumPowerError',max(abs(power-1),[],'all'));
 end

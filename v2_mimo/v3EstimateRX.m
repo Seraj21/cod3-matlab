@@ -75,15 +75,21 @@ for ue=1:numel(input.TimingOffset)
  Cf=(F.*power.')*F';C=Cf(f+1,f+1).*Ct;
  for port=1:4
   ref=reshape(permute(reshape(r.ReferenceGrid(:,:,port),W,G,L),[1 3 2]),W*L,G);
-  at=find(ref(:,1));assert(isequal(ref~=0,repmat(ref(:,1)~=0,1,G)));
+  period=r.DMRSLegacyLayouts{port}.W/W;assert(period>=1 && period==floor(period));
   samples=reshape(permute(reshape(y(:,:,rows),W,G,L,4),[1 3 2 4]),W*L,G,4);
-  z=reshape(samples(at,:,:)./ref(at,:),numel(at),G*4);
-  prior=reshape(mean(reshape(h(:,6:12,rows,port),W,G,7,4),[1 3]),1,G*4);
-  scale=max(mean(abs(z).^2,1),eps);
-  noiseRatio=max(mean(input.Noise(rows))/(4*median(scale)),3e-4);
-  S=C(at,at)+noiseRatio*eye(numel(at));R=chol((S+S')/2,'lower');
-  gain=C(:,at)/R';fitted=prior+gain*(R\(z-prior));
-  variance=max(noiseRatio/16,1-sum(abs(gain).^2,2)).*scale;
+  localMean=reshape(mean(reshape(h(:,6:12,rows,port),W,G,7,4),[1 3]),G,4);
+  fitted=complex(zeros(W*L,G,4));variance=zeros(W*L,G,4);
+  for phase=1:period
+   groups=phase:period:G;at=find(ref(:,phase));
+   assert(isequal(ref(:,groups)~=0,repmat(ref(:,phase)~=0,1,numel(groups))));
+   z=reshape(samples(at,groups,:)./ref(at,groups),numel(at),[]);
+   prior=reshape(localMean(groups,:),1,[]);scale=max(mean(abs(z).^2,1),eps);
+   noiseRatio=max(mean(input.Noise(rows))/(4*median(scale)),3e-4);
+   S=C(at,at)+noiseRatio*eye(numel(at));R=chol((S+S')/2,'lower');
+   gain=C(:,at)/R';
+   fitted(:,groups,:)=reshape(prior+gain*(R\(z-prior)),W*L,numel(groups),4);
+   variance(:,groups,:)=reshape(max(noiseRatio/16,1-sum(abs(gain).^2,2)).*scale,W*L,numel(groups),4);
+  end
   h(:,:,rows,port)=reshape(permute(reshape(fitted,W,L,G,4),[1 3 2 4]),r.K,L,4);
   v(:,:,rows,port)=reshape(permute(reshape(variance,W,L,G,4),[1 3 2 4]),r.K,L,4);
  end
