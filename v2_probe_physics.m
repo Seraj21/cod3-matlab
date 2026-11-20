@@ -4,7 +4,7 @@ if nargin>0
  if nargin<3,numRB=264;end
  if nargin<4,frames=2;end
  if nargin<5,scheme="ZF";end
- if ismember(string(scenario),["matchedHoldout" "matchedConfirm" "codingAudit" "denseAudit"])
+ if ismember(string(scenario),["matchedHoldout" "matchedConfirm" "codingAudit" "denseAudit" "halfAudit" "halfConfirm"])
   if string(scenario)=="codingAudit"
    candidates=["TurboDemap" "LabelShuffle" "LabelShuffleTurbo"];
    for mode=candidates
@@ -14,6 +14,8 @@ if nargin>0
      return
     end
    end
+  elseif ismember(string(scenario),["halfAudit" "halfConfirm"])
+   matchedHoldout(antennas,numRB,frames,string(scheme),string(scenario),"HalfRate");
   elseif string(scenario)=="denseAudit"
    passed=matchedHoldout(antennas,numRB,frames,string(scheme),"denseAudit","DensePilots");
    if passed,matchedHoldout(antennas,numRB,24,string(scheme),"denseConfirm","DensePilots");end
@@ -586,7 +588,9 @@ end
 
 function gate=matchedHoldout(antennas,numRB,frames,scheme,scenario,mode)
 addpath(pwd,'mu_mimo','v2_mimo');
-densePilots=mode=="DensePilots";cfg=v3Config(antennas,numRB,"mobile",true,densePilots);
+densePilots=ismember(mode,["DensePilots" "HalfRate"]);
+payloadRate=3/4;if mode=="HalfRate",payloadRate=1/2;end
+cfg=v3Config(antennas,numRB,"mobile",true,densePilots,payloadRate);
 cfg.RetryEP=true;cfg.DecoderIterations=50;cfg.DecoderAlgorithm='Layered belief propagation';
 cfg.PreserveBitLevels=startsWith(mode,"LabelShuffle");
 cfg.IterativeDemap=contains(mode,"Turbo") || densePilots;
@@ -597,7 +601,8 @@ assert(receiver.Scheme==scheme && receiver.MatchedPilotMask && receiver.Training
 assert(receiver.TrainingCodeRate==cfg.Rate && cfg.M==512 && r.PayloadBits==71280);
 if densePilots
  assert(receiver.DensePilots && isequal(receiver.UplinkSymbols,cfg.UplinkSymbols));
- assert(isequal(receiver.DownlinkSymbols,cfg.DownlinkSymbols) && r.CodedBits==95040);
+ assert(isequal(receiver.DownlinkSymbols,cfg.DownlinkSymbols));
+ assert(r.CodedBits*cfg.Rate==71280 && abs(r.FrameDuration-.00025)<1e-12);
 end
 assert(isequal(receiver.PilotMasks,cellfun(@(p)p.Mask,r.DownlinkLayout,'UniformOutput',false)));
 for name=string(fieldnames(receiver.TrainingChannelConfig)).'
@@ -605,7 +610,7 @@ for name=string(fieldnames(receiver.TrainingChannelConfig)).'
 end
 points=[20 30 40];methods=["CNN" "Perfect" "LMMSE" "LS"];
 base=130000000;
-if densePilots,points=40;end
+if mode=="DensePilots",points=40;end
 if startsWith(scenario,"coding")
  base=130000000;points=40;methods="CNN";
 end
@@ -626,7 +631,8 @@ for n=1:frames
  for snr=points
   input=v3Receive(packet,scene,r,snr,false,false);
   [truth,~,~]=v2EstimateRX(input,receiver,r,"Perfect");input.Truth=[];
-  for method=methods
+  compared=methods;if mode=="HalfRate" && snr<40,compared=["CNN" "Perfect"];end
+  for method=compared
    local=input;
    if method=="Perfect"
     h=truth;v=zeros(size(h));local.Observed=v2BeamObserved(input.Observed,r);
@@ -651,7 +657,7 @@ for n=1:frames
    t=T(T.SNR_dB==snr & string(T.Estimator)==method,:);
    ber=sum(t.Errors)/sum(t.Bits);mbps=sum(t.Bits.*t.Delivered)/(n*r.FrameDuration*1e6);
    fprintf('MATCHED_RESULT %s\n',jsonencode(struct('BS',antennas,'Precoder',scheme, ...
-    'SNR_dB',snr,'Estimator',method,'ReceiverMode',mode,'BlendRX',receiver.BlendRX,'Frames',n,'BER',ber,'Goodput_Mbps',mbps, ...
+    'SNR_dB',snr,'Estimator',method,'ReceiverMode',mode,'CodeRate',cfg.Rate,'CodedBitsPerUE',r.CodedBits,'BlendRX',receiver.BlendRX,'Frames',n,'BER',ber,'Goodput_Mbps',mbps, ...
     'CorrectBlocks',nnz(t.Delivered),'Blocks',height(t),'Bits',sum(t.Bits))));
    if method=="CNN" && snr==40,gate=ber<1e-5 && mbps>=1140;end
   end

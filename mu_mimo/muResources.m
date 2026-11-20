@@ -19,8 +19,8 @@ pdsch.DMRS.CustomSymbolSet = dmrsTimes-1;
 r.DataMask = false(r.K,r.L);
 r.DMRS = complex(zeros(r.K,r.L,U));
 if isfield(cfg,'DensePilots') && cfg.DensePilots
-    % Explicit experimental TDD map. Fill four payload symbols and reserve
-    % the five others for pilots before puncturing the phase references.
+    % Reserve the configured DMRS symbols, then puncture phase references
+    % from the remaining payload symbols in the same slot.
     r.DataMask(:,setdiff(dl,dmrsTimes))=true;
     for group=1:2
         freq=group:2:r.K;

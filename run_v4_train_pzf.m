@@ -1,4 +1,4 @@
-function run_v4_train_pzf(folder,useProjection,modelFile,trainFrames,validationFrames,epochs,scheme,matchedPilots,scaledResidual,densePilots)
+function run_v4_train_pzf(folder,useProjection,modelFile,trainFrames,validationFrames,epochs,scheme,matchedPilots,scaledResidual,densePilots,payloadRate)
 % Fit the receiver on the requested deployment waveform and pilot coordinates.
 if nargin<3,modelFile='v3_refined/v3_model.mat';end
 if nargin<4,trainFrames=128;end
@@ -8,6 +8,7 @@ if nargin<7,scheme="PZF";end
 if nargin<8,matchedPilots=false;end
 if nargin<9,scaledResidual=false;end
 if nargin<10,densePilots=false;end
+if nargin<11,payloadRate=3/4;end
 assert(~scaledResidual || (matchedPilots && useProjection));
 scheme=string(scheme);
 numRB=66;if matchedPilots,numRB=264;end
@@ -16,7 +17,7 @@ addpath(pwd,'mu_mimo','v2_mimo');
 loaded=load(modelFile,'model');model=loaded.model;
 assert(model.Version==6 && model.Selection.(scheme)(1)==0);
 if ~isfolder(folder),mkdir(folder);end
-cfg=v3Config(32,numRB,"mobile",matchedPilots,densePilots);r=v3Resources(cfg);r.ScaledResidual=scaledResidual;r.DensePilots=densePilots;times=cfg.DownlinkSymbols;
+cfg=v3Config(32,numRB,"mobile",matchedPilots,densePilots,payloadRate);r=v3Resources(cfg);r.PayloadRate=cfg.Rate;r.ScaledResidual=scaledResidual;r.DensePilots=densePilots;times=cfg.DownlinkSymbols;
 % Refit the deployed transmitter's predictor before collecting receiver data.
 % These channel seeds are disjoint from receiver training, validation and test.
 if scaledResidual && ~densePilots
@@ -27,7 +28,7 @@ else
 txStats=v2Prior("init",r.UplinkLayout,0);
 txFrames=64;if matchedPilots,txFrames=24;end
 for frame=1:txFrames
- txCfg=v3Config(32+32*mod(frame-1,2),numRB,"mobile",matchedPilots,densePilots);
+ txCfg=v3Config(32+32*mod(frame-1,2),numRB,"mobile",matchedPilots,densePilots,payloadRate);
  scene=v2Sounding(txCfg,r,97000000+frame);
  txStats=v2Prior("accumulate",txStats,scene.ULCleanSamples,scene.ULTruth,r.UplinkLayout);
 end
@@ -133,7 +134,7 @@ function [records,stats,conditions]=collect(model,r,count,seedBase,stats,trainin
 crops=1+3*r.ScaledResidual;records=cell(8*count*crops,1);at=0;conditions=zeros(count,5);
 for frame=1:count
  is64=mod(frame-1,2);bs=32+32*is64;
- cfg=v3Config(bs,r.K/12,"mobile",r.MatchedPilotMask,r.DensePilots);seed=seedBase+frame;
+ cfg=v3Config(bs,r.K/12,"mobile",r.MatchedPilotMask,r.DensePilots,r.PayloadRate);seed=seedBase+frame;
  scene=v2Sounding(cfg,r,seed);
  tx=v2CEBase(scene.ULSamples,scene.ULNoise,r.UplinkLayout,model.PriorsTX);
  weights=v3Weights(tx.Wiener,tx.VarianceWiener,scheme,scene,r);

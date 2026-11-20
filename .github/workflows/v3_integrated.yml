@@ -26,7 +26,7 @@ jobs:
         with:
           command: addpath(pwd,'mu_mimo','v2_mimo');v4ReceiverSelfTest;checks=runtests({'v2_mimo/tests/testV2Core.m','v2_mimo/tests/testV3Receiver.m'});assertSuccess(checks);
   matched-train:
-    if: ${{ contains(github.event.head_commit.message, '[matched-pilots]') || contains(github.event.head_commit.message, '[scaled-pilots]') || contains(github.event.head_commit.message, '[dense-pilots]') }}
+    if: ${{ contains(github.event.head_commit.message, '[matched-pilots]') || contains(github.event.head_commit.message, '[scaled-pilots]') || contains(github.event.head_commit.message, '[dense-pilots]') || contains(github.event.head_commit.message, '[half-rate]') }}
     runs-on: ubuntu-latest
     timeout-minutes: 150
     steps:
@@ -50,7 +50,12 @@ jobs:
           products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
       - uses: matlab-actions/run-command@v3
         with:
-          command: run_v4_train_pzf('matched_receiver',true,'v3_refined/v3_model.mat',32,12,10,"ZF",true,${{ (contains(github.event.head_commit.message, '[scaled-pilots]') || contains(github.event.head_commit.message, '[dense-pilots]')) && '1' || '0' }},${{ contains(github.event.head_commit.message, '[dense-pilots]') && '1' || '0' }});
+          command: |
+            half=${{ contains(github.event.head_commit.message, '[half-rate]') && '1' || '0' }};
+            dense=half || ${{ contains(github.event.head_commit.message, '[dense-pilots]') && '1' || '0' }};
+            scaled=dense || ${{ contains(github.event.head_commit.message, '[scaled-pilots]') && '1' || '0' }};
+            rate=3/4;if half,rate=1/2;end
+            run_v4_train_pzf('matched_receiver',true,'v3_refined/v3_model.mat',32,12,10,"ZF",true,scaled,dense,rate);
       - uses: actions/upload-artifact@v7
         with:
           name: matched-receiver-ZF
@@ -77,6 +82,7 @@ jobs:
         with:
           command: |
             bs=${{ matrix.bs }};
+            if ${{ contains(github.event.head_commit.message, '[half-rate]') && '1' || '0' }},run_v3_integrated("ZF",bs,0,"halfAudit",264);return;end
             if ${{ contains(github.event.head_commit.message, '[dense-pilots]') && '1' || '0' }},v2_probe_physics("denseAudit",bs,264,4,"ZF");return;end
             run_v3_integrated("ZF",bs,0,"matched",264);
             trial=readtable(fullfile('matched_measurements',"ZF_BS"+bs+"_matchedHoldout.csv"));
@@ -87,6 +93,52 @@ jobs:
         if: always()
         with:
           name: matched-measurement-ZF-${{ matrix.bs }}
+          path: matched_measurements/
+  half-confirm:
+    needs: matched-test
+    if: ${{ contains(github.event.head_commit.message, '[half-rate]') }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        bs: [32, 64]
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: matched-measurement-ZF-${{ matrix.bs }}
+          path: screening
+      - id: gate
+        shell: python
+        run: |
+          import csv, os
+          from pathlib import Path
+          with next(Path("screening").glob("*halfAudit*.csv")).open() as handle:
+              high = [r for r in csv.DictReader(handle) if r["Estimator"]=="CNN" and float(r["SNR_dB"])==40]
+          assert len(high)==16 and len({(r["Seed"],r["UE"]) for r in high})==16
+          assert sum(int(r["Bits"]) for r in high)==1140480
+          passed = all(int(r["Errors"])==0 and r["Delivered"].lower() in ("true","1") for r in high)
+          with open(os.environ["GITHUB_OUTPUT"],"a") as handle:
+              print("passed="+str(passed).lower(),file=handle)
+      - uses: actions/download-artifact@v8
+        if: steps.gate.outputs.passed == 'true'
+        with:
+          name: matched-receiver-ZF
+          path: matched_receiver
+      - uses: matlab-actions/setup-matlab@v3
+        if: steps.gate.outputs.passed == 'true'
+        with:
+          release: R2025b
+          products: Communications_Toolbox 5G_Toolbox Deep_Learning_Toolbox
+      - uses: matlab-actions/run-command@v3
+        if: steps.gate.outputs.passed == 'true'
+        with:
+          command: run_v3_integrated("ZF",${{ matrix.bs }},0,"halfConfirm",264);
+      - uses: actions/upload-artifact@v7
+        if: always() && steps.gate.outputs.passed == 'true'
+        with:
+          name: half-confirm-measurement-ZF-${{ matrix.bs }}
           path: matched_measurements/
   coding-audit:
     needs: smoke
@@ -119,7 +171,7 @@ jobs:
           path: matched_measurements/
   diagnose:
     needs: smoke
-    if: ${{ !contains(github.event.head_commit.message, '[full-evaluation]') && !contains(github.event.head_commit.message, '[calibrate]') && !contains(github.event.head_commit.message, '[pilot-audit]') && !contains(github.event.head_commit.message, '[receiver-audit]') && !contains(github.event.head_commit.message, '[harq-recovery]') && !contains(github.event.head_commit.message, '[first-pass-joint]') && !contains(github.event.head_commit.message, '[tracked-first-pass]') && !contains(github.event.head_commit.message, '[matched-pilots]') && !contains(github.event.head_commit.message, '[scaled-pilots]') && !contains(github.event.head_commit.message, '[coding-pilots]') && !contains(github.event.head_commit.message, '[dense-pilots]') }}
+    if: ${{ !contains(github.event.head_commit.message, '[full-evaluation]') && !contains(github.event.head_commit.message, '[calibrate]') && !contains(github.event.head_commit.message, '[pilot-audit]') && !contains(github.event.head_commit.message, '[receiver-audit]') && !contains(github.event.head_commit.message, '[harq-recovery]') && !contains(github.event.head_commit.message, '[first-pass-joint]') && !contains(github.event.head_commit.message, '[tracked-first-pass]') && !contains(github.event.head_commit.message, '[matched-pilots]') && !contains(github.event.head_commit.message, '[scaled-pilots]') && !contains(github.event.head_commit.message, '[coding-pilots]') && !contains(github.event.head_commit.message, '[dense-pilots]') && !contains(github.event.head_commit.message, '[half-rate]') }}
     strategy:
       fail-fast: false
       matrix:

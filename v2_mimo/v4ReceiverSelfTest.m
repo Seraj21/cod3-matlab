@@ -158,6 +158,15 @@ assert(rr.PayloadBits==71280 && rr.CodedBits==95040 && abs(rr.FrameDuration-.000
 srsSymbols=find(any(rr.SRS~=0,[1 3]));assert(isequal(srsSymbols(:).',1:2));
 assert(all(cellfun(@(p)p.Count==34,rr.DownlinkLayout)));
 assert(isequal(unique(rr.DataTimes).',[5 7 9 11]));
+% Same airtime and payload under the approved rate-1/2 slot.
+half=v3Config(32,264,"mobile",true,true,1/2);rh=v3Resources(half);
+assert(abs(rh.FrameDuration-rr.FrameDuration)<1e-12 && rh.PayloadBits==rr.PayloadBits);
+assert(rh.CodedBits==142560 && numel(rh.DataIndices)==15840);
+assert(isequal(unique(rh.DataTimes).',[5 6 7 9 10 11]));
+assert(all(cellfun(@(p)p.Count==24,rh.DownlinkLayout)));
+[~,msg]=muPayload(half,rh,71000805);
+code=rh.Codec.encode(msg(:,1));[decoded,bad]=rh.Codec.decode(12*double(1-2*code),20,'Layered belief propagation');
+assert(~bad && isequal(decoded,msg(:,1)));
 % Decoder feedback crosses both the NR and slot interleavers in RV0 order.
 cfg=v3Config(32,12);cfg.PreserveBitLevels=true;r=muResources(cfg);
 assert(isequal(sort(r.BitOrder),(1:r.CodedBits).'));
