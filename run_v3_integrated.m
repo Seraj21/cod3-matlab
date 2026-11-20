@@ -5,6 +5,11 @@ precoder=string(precoder);stage=string(stage);
 if nargin<5,numRB=264;end
 assert(ismember(precoder,["MR" "ZF" "PZF"]));
 assert(ismember(antennas,[32 64]));
+if ismember(stage,["codingAudit" "denseAudit"])
+ assert(batch==0 && numRB==264 && precoder=="ZF");
+ v2_probe_physics(stage,antennas,numRB,4,precoder);
+ return
+end
 if ismember(stage,["matched" "matchedConfirm"])
  assert(batch==0 && numRB==264,'Matched evaluations use the 200 MHz grid and batch zero.');
  if stage=="matched"

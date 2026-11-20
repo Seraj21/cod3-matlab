@@ -668,14 +668,20 @@ file=fullfile('receiver_audit','integrated_receiver',lower(scheme)+"_receiver.ma
 loaded=load(file,'receiver');receiver=loaded.receiver;
 cfg=v3Config(antennas,numRB,"mobile");
 assert(receiver.Scheme==scheme && receiver.TrainingCodeRate==cfg.Rate);
-for name=string(fieldnames(receiver.TrainingChannelConfig)).'
- assert(isequal(receiver.TrainingChannelConfig.(name),cfg.(name)));
-end
 staggered=scenario~="trackedFirstPass";
 wideband=ismember(scenario,["soundingFirstPass" "soundingHoldout"]);
 cfg.BeamWidth=24;cfg.PrecoderTimeMode='slot';
 if wideband,cfg.BeamWidth=8;end
 cfg.OrthogonalDMRS=staggered;cfg.StaggeredDMRS=staggered;cfg.RetryEP=staggered;
+% These older experiments deliberately reuse a receiver with a different
+% beam width and time mode. Check deployed settings before noting the mismatch.
+for name=string(fieldnames(receiver.TrainingChannelConfig)).'
+ if ~isequal(receiver.TrainingChannelConfig.(name),cfg.(name))
+  assert(ismember(name,["BeamWidth" "PrecoderTimeMode"]), ...
+   'Unexpected training/deployment mismatch in %s',name);
+  fprintf('Frozen receiver differs from this diagnostic in %s.\n',name);
+ end
+end
 cfg.DecoderIterations=50;cfg.DecoderAlgorithm='Layered belief propagation';
 r=v3Resources(cfg);assert(cfg.M==512 && cfg.Rate==.75 && r.PayloadBits==71280);
 targetMbps=1140;targetBER=1e-5;snr=40;
