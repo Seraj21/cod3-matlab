@@ -4,8 +4,8 @@ if nargin>0
  if nargin<3,numRB=264;end
  if nargin<4,frames=2;end
  if nargin<5,scheme="ZF";end
- if string(scenario)=="matchedHoldout"
-  matchedHoldout(antennas,numRB,frames,string(scheme));
+ if ismember(string(scenario),["matchedHoldout" "matchedConfirm"])
+  matchedHoldout(antennas,numRB,frames,string(scheme),string(scenario));
  elseif ismember(string(scenario),["trackedFirstPass" "staggeredFirstPass" "soundingFirstPass" "soundingHoldout"])
   trackedFirstPass(antennas,numRB,frames,string(scheme),string(scenario));
  elseif string(scenario)=="firstPassJoint"
@@ -570,7 +570,7 @@ fprintf('FIRST_PASS_ACCEPTANCE_RESULT %s\n',jsonencode(gate));
 assert(gate.Passed,'First-pass reliability acceptance was not met. Keep baseline and failure records.');
 end
 
-function matchedHoldout(antennas,numRB,frames,scheme)
+function matchedHoldout(antennas,numRB,frames,scheme,scenario)
 addpath(pwd,'mu_mimo','v2_mimo');
 cfg=v3Config(antennas,numRB,"mobile",true);
 cfg.RetryEP=true;cfg.DecoderIterations=50;cfg.DecoderAlgorithm='Layered belief propagation';
@@ -584,9 +584,14 @@ for name=string(fieldnames(receiver.TrainingChannelConfig)).'
  assert(isequal(receiver.TrainingChannelConfig.(name),cfg.(name)),'Training mismatch: %s',name);
 end
 points=[20 30 40];methods=["CNN" "Perfect" "LMMSE" "LS"];
+base=130000000;
+if scenario=="matchedConfirm"
+ base=150000000;points=40;methods="CNN";
+ assert(receiver.BlendRX>0,'The validation split selected a zero CNN correction.');
+end
 rows={};gate=false;
 for n=1:frames
- seed=130000000+n;
+ seed=base+n;
  scene=v2Sounding(cfg,r,seed);[grid,bits]=muPayload(cfg,r,muSeed(seed,70));
  tx=v2CEBase(scene.ULSamples,scene.ULNoise,r.UplinkLayout,receiver.PriorsTX);
  [w,report]=v3Weights(tx.Wiener,tx.VarianceWiener,scheme,scene,r);
@@ -617,17 +622,18 @@ for n=1:frames
    end
    T=cell2table(rows,'VariableNames',{'Precoder','BS','Seed','SNR_dB','Estimator', ...
     'UE','Bits','Errors','CRCFailed','Delivered','DataNMSE','LinearPreFEC_BER'});
-   writetable(T,fullfile(folder,scheme+"_BS"+antennas+".csv"));
+   writetable(T,fullfile(folder,scheme+"_BS"+antennas+"_"+scenario+".csv"));
    t=T(T.SNR_dB==snr & string(T.Estimator)==method,:);
    ber=sum(t.Errors)/sum(t.Bits);mbps=sum(t.Bits.*t.Delivered)/(n*r.FrameDuration*1e6);
    fprintf('MATCHED_RESULT %s\n',jsonencode(struct('BS',antennas,'Precoder',scheme, ...
-    'SNR_dB',snr,'Estimator',method,'Frames',n,'BER',ber,'Goodput_Mbps',mbps, ...
+    'SNR_dB',snr,'Estimator',method,'BlendRX',receiver.BlendRX,'Frames',n,'BER',ber,'Goodput_Mbps',mbps, ...
     'CorrectBlocks',nnz(t.Delivered),'Blocks',height(t),'Bits',sum(t.Bits))));
    if method=="CNN" && snr==40,gate=ber<1e-5 && mbps>=1140;end
   end
  end
 end
 fprintf('MATCHED_GATE %s\n',jsonencode(struct('BS',antennas,'Precoder',scheme,'Passed',gate)));
+if scenario=="matchedConfirm",assert(gate,'Fresh channels missed the joint target');end
 end
 
 function trackedFirstPass(antennas,numRB,frames,scheme,scenario)

@@ -1,4 +1,4 @@
-function run_v4_train_pzf(folder,useProjection,modelFile,trainFrames,validationFrames,epochs,scheme,matchedPilots)
+function run_v4_train_pzf(folder,useProjection,modelFile,trainFrames,validationFrames,epochs,scheme,matchedPilots,scaledResidual)
 % Fit the receiver on the requested deployment waveform and pilot coordinates.
 if nargin<3,modelFile='v3_refined/v3_model.mat';end
 if nargin<4,trainFrames=128;end
@@ -6,6 +6,8 @@ if nargin<5,validationFrames=32;end
 if nargin<6,epochs=10;end
 if nargin<7,scheme="PZF";end
 if nargin<8,matchedPilots=false;end
+if nargin<9,scaledResidual=false;end
+assert(~scaledResidual || (matchedPilots && useProjection));
 scheme=string(scheme);
 numRB=66;if matchedPilots,numRB=264;end
 assert(isscalar(scheme) && ismember(scheme,["MR" "ZF" "PZF"]));
@@ -13,9 +15,14 @@ addpath(pwd,'mu_mimo','v2_mimo');
 loaded=load(modelFile,'model');model=loaded.model;
 assert(model.Version==6 && model.Selection.(scheme)(1)==0);
 if ~isfolder(folder),mkdir(folder);end
-cfg=v3Config(32,numRB,"mobile",matchedPilots);r=v3Resources(cfg);
+cfg=v3Config(32,numRB,"mobile",matchedPilots);r=v3Resources(cfg);r.ScaledResidual=scaledResidual;
 % Refit the deployed transmitter's predictor before collecting receiver data.
 % These channel seeds are disjoint from receiver training, validation and test.
+if scaledResidual
+ base=load(fullfile('prior_receiver',lower(scheme)+"_receiver.mat"),'receiver');
+ assert(base.receiver.MatchedPilotMask && base.receiver.TrainingBandwidthRB==numRB);
+ model.PriorsTX=base.receiver.PriorsTX;txFrames=base.receiver.TransmitterPriorChannels;
+else
 txStats=v2Prior("init",r.UplinkLayout,0);
 txFrames=64;if matchedPilots,txFrames=24;end
 for frame=1:txFrames
@@ -24,6 +31,7 @@ for frame=1:txFrames
  txStats=v2Prior("accumulate",txStats,scene.ULCleanSamples,scene.ULTruth,r.UplinkLayout);
 end
 model.PriorsTX=v2Prior("finalize",txStats);clear txStats scene
+end
 layouts=cell(1,8);
 for user=1:4
  layout=r.DownlinkLayout{user};
@@ -49,6 +57,17 @@ if ~isempty(legacyFields),receiver=rmfield(receiver,legacyFields);end
 net=receiver.NetworkRX;
 loss=@v2RXLoss;
 if useProjection,loss=@v4AlignedLoss;end
+amplitude=1;
+if scaledResidual
+ % Learn the small conditional correction relative to the matched Wiener
+ % estimate; keep its calibrated error covariance as the variance baseline.
+ times=unique(r.DataTimes);
+ amplitude=max(1e-4,sqrt(mean(T(:,times,1:128,:).^2,'all')));
+ net=v3RXNetwork(size(X,3),16,net);
+ T(:,:,1:128,:)=T(:,:,1:128,:)/amplitude;
+ Y(:,:,1:128,:)=Y(:,:,1:128,:)/amplitude;
+ loss=@(z,t)conditionalMSE(z,t,times);
+end
 rng(721600,'twister');
 frequency=max(1,ceil(size(X,4)/32));
 options=trainingOptions('adam','MaxEpochs',epochs,'MiniBatchSize',32, ...
@@ -61,19 +80,32 @@ fprintf('%s projection=%d: %d train patches, %d validation patches\n', ...
  scheme,useProjection,size(X,4),size(V,4));
 [net,info]=trainnet(X,T,net,loss,options);
 clear X T
+if scaledResidual
+ % Convert the fitted head back into the native channel normalization so
+ % inference uses the same operator as validation and the existing receiver.
+ values=net.Learnables;
+ head=find(string(values.Layer)=="mean_and_log_variance");
+ assert(numel(head)==2);
+ for k=head.'
+  values.Value{k}=values.Value{k}*amplitude;
+ end
+ net=dlupdate(@(~,value)value,net,values);
+ Y(:,:,1:128,:)=Y(:,:,1:128,:)*amplitude;
+end
 writetable(info.TrainingHistory,fullfile(folder,'learning.csv'));
 predicted=zeros(6,12,192,size(V,4),'single');
 for k=1:32:size(V,4)
  idx=k:min(k+31,size(V,4));
  predicted(:,:,:,idx)=extractdata(predict(net,dlarray(V(:,:,:,idx),'SSCB')));
 end
-target=double(Y(:,6:12,1:128,:));residual=double(predicted(:,6:12,1:128,:));
+times=6:12;if scaledResidual,times=unique(r.DataTimes);end
+target=double(Y(:,times,1:128,:));residual=double(predicted(:,times,1:128,:));
 blend=max(0,min(1,sum(residual.*target,'all')/max(sum(residual.^2,'all'),eps)));
 priors=calibrateVariance(priors,Y,predicted,blend);
 receiver.PriorsRX=priors;receiver.NetworkRX=net;receiver.BlendRX=blend;receiver.Signature=model.Signature;
 receiver.Signature.TargetCodeRate=cfg.Rate;
 receiver.TrainingChannels=trainFrames;receiver.ValidationChannels=validationFrames;
-receiver.TrainingPatches=24*trainFrames;receiver.ProjectionLoss=useProjection;
+receiver.TrainingPatches=24*trainFrames*(1+3*scaledResidual);receiver.TrainingResidualScale=amplitude;receiver.ProjectionLoss=useProjection;
 receiver.TrainingBandwidthRB=numRB;receiver.TrainingCodeRate=cfg.Rate;
 receiver.TrainingSNR_dB=[min(conditions.SNR1_dB) max(conditions.SNR2_dB)];
 if matchedPilots
@@ -96,7 +128,7 @@ fprintf('%s validation blend %.6f; normalized MSE %.6g -> %.6g\n', ...
  scheme,blend,receiver.ValidationNormalizedMSE);
 end
 function [records,stats,conditions]=collect(model,r,count,seedBase,stats,training,scheme)
-records=cell(8*count,1);at=0;conditions=zeros(count,5);
+crops=1+3*r.ScaledResidual;records=cell(8*count*crops,1);at=0;conditions=zeros(count,5);
 for frame=1:count
  is64=mod(frame-1,2);bs=32+32*is64;
  cfg=v3Config(bs,r.K/12,"mobile",r.MatchedPilotMask);seed=seedBase+frame;
@@ -121,13 +153,15 @@ for frame=1:count
     stats=v2Prior("accumulate",stats,clean,truth,layouts);
    end
    rows=(user-1)*4+(1:4);
-   first=1+mod(7*(frame-1)+5*(user-1),r.G-6);
+   for crop=1:crops
+   first=1+mod(7*(frame-1)+5*(user-1)+(crop-1)*floor(r.G/crops),r.G-6);
    tones=(first-1)*24+(1:168);
    at=at+1;
    records{at}=struct('Samples',single(samples(tones,:,:,:)), ...
     'Truth',single(truth(tones,:,:,:)),'Layouts',{layouts},'Order',order, ...
     'Noise',input.Noise(rows),'Observed',single(observed(tones,:,rows)), ...
     'Tones',tones);
+   end
   end
  end
  if mod(frame,8)==0 || frame==count
@@ -184,4 +218,17 @@ for role=["Own" "Other"]
   end
  end
 end
+end
+
+function loss=conditionalMSE(z,t,times)
+% The first 128 channels are 64 packed complex errors. Target channels
+% 193:320 encode the receiver's normalized projection for each stream.
+er=z(:,times,1:64,:)-t(:,times,1:64,:);
+ei=z(:,times,65:128,:)-t(:,times,65:128,:);
+cr=t(:,times,193:256,:);ci=t(:,times,257:320,:);
+realPart=er.*cr-ei.*ci;imagPart=er.*ci+ei.*cr;
+idx=reshape((1:4).'+16*(0:3),1,[]);
+pr=realPart(:,:,idx,:)+realPart(:,:,idx+4,:)+realPart(:,:,idx+8,:)+realPart(:,:,idx+12,:);
+pi=imagPart(:,:,idx,:)+imagPart(:,:,idx+4,:)+imagPart(:,:,idx+8,:)+imagPart(:,:,idx+12,:);
+loss=mean(er.^2+ei.^2,'all')+.5*mean(pr.^2+pi.^2,'all');
 end
